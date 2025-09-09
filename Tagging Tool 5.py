@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import numpy as np
 import io
 
-
+# test
 @dataclass
 class TaxonomyConfig:
     """Configuration for taxonomy structure"""
