@@ -952,6 +952,77 @@ def create_streamlit_app():
                             for tag in tags:
                                 desc = taxonomy.descriptions.get(tag, "")
                                 st.write(f"- {tag}: {desc}" if desc else f"- {tag}")
+                
+                # Excel taxonomy formatting section
+                st.subheader("📋 Excel Taxonomy Formatting")
+                
+                if use_tag_categories_taxonomy:
+                    # When using tag categories
+                    st.markdown("Starting in cell A1, three columns: **Category**, **Tag**, and **Description** of tag.")
+                    
+                    # Show categorized example table
+                    categorized_data = {
+                        "Category": ["Technology", "Technology", "Healthcare", "Healthcare", "Finance", "Finance"],
+                        "Tag": ["Software", "Hardware", "Pharmaceutical", "Medical Devices", "Banking", "Fintech"],
+                        "Description": [
+                            "Companies that develop software products",
+                            "Companies that manufacture hardware", 
+                            "Drug development and manufacturing",
+                            "Medical equipment manufacturers",
+                            "Traditional banking services",
+                            "Financial technology companies"
+                        ]
+                    }
+                    categorized_df = pd.DataFrame(categorized_data)
+                    
+                    # Apply styling to make table text smaller
+                    st.markdown("""
+                    <style>
+                    .small-table table {
+                        font-size: 12px !important;
+                    }
+                    .small-table td, .small-table th {
+                        font-size: 12px !important;
+                        padding: 4px 8px !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown('<div class="small-table">', unsafe_allow_html=True)
+                    st.table(categorized_df)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                    
+                else:
+                    # When NOT using tag categories
+                    st.markdown("Starting in cell A1, two columns: **Tag** and **Description** of tag.")
+                    
+                    # Show simple example table
+                    simple_data = {
+                        "Tag": ["Software", "Hardware", "Consulting"],
+                        "Description": [
+                            "Companies that develop software",
+                            "Companies that manufacture hardware",
+                            "Professional services companies"
+                        ]
+                    }
+                    simple_df = pd.DataFrame(simple_data)
+                    
+                    # Apply styling to make table text smaller
+                    st.markdown("""
+                    <style>
+                    .small-table table {
+                        font-size: 12px !important;
+                    }
+                    .small-table td, .small-table th {
+                        font-size: 12px !important;
+                        padding: 4px 8px !important;
+                    }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
+                    st.markdown('<div class="small-table">', unsafe_allow_html=True)
+                    st.table(simple_df)
+                    st.markdown('</div>', unsafe_allow_html=True)
             
             elif taxonomy_method == "Paste as text":
                 st.markdown("Paste your taxonomy in YAML or JSON format:")
