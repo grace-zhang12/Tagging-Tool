@@ -1025,34 +1025,56 @@ def create_streamlit_app():
                     st.markdown('</div>', unsafe_allow_html=True)
             
             elif taxonomy_method == "Paste as text":
-                st.markdown("Paste your taxonomy in YAML or JSON format:")
-                taxonomy_text = st.text_area("Taxonomy", height=300, 
-                                        placeholder="""categories:
-    default:
-        - Tag1
-        - Tag2
-        - Tag3
-    descriptions:
-    Tag1: "Description of Tag1"
-    Tag2: "Description of Tag2"
-    """)
+                st.markdown("Paste your taxonomy in YAML format:")
+                
+                # Conditional label and placeholder based on tag categories checkbox
+                if use_tag_categories_taxonomy:
+                    # When using tag categories
+                    taxonomy_label = "Taxonomy"
+                    taxonomy_placeholder = """categories:
+  Category1:
+    - Tag1
+    - Tag2
+  Category2:
+    - Tag3
+    - Tag4
+  Category3:
+    - Tag5
+    - Tag6
+descriptions:
+  Tag1: "Description of Tag1"
+  Tag2: "Description of Tag2"
+  Tag3: "Description of Tag3"
+  Tag4: "Description of Tag4"
+  Tag5: "Description of Tag5"
+  Tag6: "Description of Tag6"
+"""
+                else:
+                    # When NOT using tag categories
+                    taxonomy_label = "Taxonomy\n\nSince tags are not categorized, there is one category of tags called 'default'."
+                    taxonomy_placeholder = """categories:
+  default:
+    - Tag1
+    - Tag2
+    - Tag3
+descriptions:
+  Tag1: "Description of Tag1"
+  Tag2: "Description of Tag2"
+  Tag3: "Description of Tag3"
+"""
+                
+                taxonomy_text = st.text_area(taxonomy_label, height=300, 
+                                        placeholder=taxonomy_placeholder)
                 
                 if st.button("Parse Taxonomy"):
                     try:
-                        # Try YAML first
+                        # Parse YAML only
                         taxonomy_dict = yaml.safe_load(taxonomy_text)
                         taxonomy = st.session_state.tagger.load_taxonomy_from_dict(taxonomy_dict)
                         st.session_state.tagger.taxonomy = taxonomy
                         st.success("✅ Taxonomy parsed successfully!")
-                    except:
-                        try:
-                            # Try JSON
-                            taxonomy_dict = json.loads(taxonomy_text)
-                            taxonomy = st.session_state.tagger.load_taxonomy_from_dict(taxonomy_dict)
-                            st.session_state.tagger.taxonomy = taxonomy
-                            st.success("✅ Taxonomy parsed successfully!")
-                        except Exception as e:
-                            st.error(f"Failed to parse taxonomy: {str(e)}")
+                    except Exception as e:
+                        st.error(f"Failed to parse YAML taxonomy: {str(e)}")
             
             else:  # Manual entry
                 st.markdown("Enter tags manually:")
