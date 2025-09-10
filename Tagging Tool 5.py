@@ -1079,32 +1079,54 @@ descriptions:
             else:  # Manual entry
                 st.markdown("Enter tags manually:")
                 
-                # Simple mode
-                num_categories = st.number_input("Number of categories", 1, 10, 1)
-                
                 categories = {}
                 descriptions = {}
                 
-                for i in range(num_categories):
-                    with st.expander(f"Category {i+1}", expanded=i==0):
-                        cat_name = st.text_input(f"Category name", "default", key=f"cat_{i}")
-                        tags_text = st.text_area(
-                            "Tags (one per line)", 
-                            key=f"tags_{i}",
-                            help="Enter each tag on a new line"
-                        )
-                        
-                        if tags_text:
-                            tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
-                            categories[cat_name] = tags
+                if use_tag_categories_taxonomy:
+                    # When using tag categories - show full interface
+                    num_categories = st.number_input("Number of categories", 1, 10, 1)
+                    
+                    for i in range(num_categories):
+                        with st.expander(f"Category {i+1}", expanded=i==0):
+                            cat_name = st.text_input(f"Category name", "default", key=f"cat_{i}")
+                            tags_text = st.text_area(
+                                "Tags (one per line)", 
+                                key=f"tags_{i}",
+                                help="Enter each tag on a new line"
+                            )
+                            st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
                             
-                            # Optional descriptions
-                            if st.checkbox("Add descriptions", key=f"desc_check_{i}"):
-                                for tag in tags:
-                                    desc = st.text_input(f"Description for '{tag}'", 
-                                                    key=f"desc_{i}_{tag}")
-                                    if desc:
-                                        descriptions[tag] = desc
+                            if tags_text:
+                                tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
+                                categories[cat_name] = tags
+                                
+                                # Optional descriptions
+                                if st.checkbox("Add descriptions", key=f"desc_check_{i}"):
+                                    for tag in tags:
+                                        desc = st.text_input(f"Description for '{tag}'", 
+                                                        key=f"desc_{i}_{tag}")
+                                        if desc:
+                                            descriptions[tag] = desc
+                else:
+                    # When NOT using tag categories - simplified interface
+                    tags_text = st.text_area(
+                        "Tags (one per line)", 
+                        key="tags_simple",
+                        help="Enter each tag on a new line"
+                    )
+                    st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
+                    
+                    if tags_text:
+                        tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
+                        categories["default"] = tags
+                        
+                        # Optional descriptions
+                        if st.checkbox("Add descriptions", key="desc_check_simple"):
+                            for tag in tags:
+                                desc = st.text_input(f"Description for '{tag}'", 
+                                                key=f"desc_simple_{tag}")
+                                if desc:
+                                    descriptions[tag] = desc
                 
                 if st.button("Create Taxonomy"):
                     taxonomy = TaxonomyConfig(
