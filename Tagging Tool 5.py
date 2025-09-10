@@ -1142,14 +1142,8 @@ descriptions:
                 st.session_state.config['use_taxonomy'] = False
                 st.session_state.config['custom_queries'] = []  # Clear multiple queries
             
-            # Updated layout with checkbox moved left and button right next to it
-            col1, col2, col3 = st.columns([2, 2, 6])
-            with col1:
-                st.subheader("✍️ Prompt Configuration")
-            with col2:
-                use_tag_categories_prompt = st.checkbox("Use tag categories", key="categories_prompt")
-            with col3:
-                create_tag_categories_helper("prompt")
+            st.subheader("✍️ Prompt Configuration")
+            st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
             
             # Preset prompts
             preset_choice = st.selectbox(
@@ -1192,14 +1186,8 @@ descriptions:
                 st.session_state.config['use_taxonomy'] = False
                 st.session_state.config['custom_prompt'] = None  # Clear single prompt
             
-            # Updated layout with checkbox above button, aligned with title
-            col1, col2 = st.columns([3, 7])
-            with col1:
-                st.subheader("✍️ Multiple Query Configuration")
-            with col2:
-                use_tag_categories_multiple = st.checkbox("Use tag categories", key="categories_multiple")
-                st.write("")  # Add vertical spacing
-                create_tag_categories_helper("multiple")
+            st.subheader("✍️ Multiple Query Configuration")
+            st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
             
             st.info("Configure multiple custom queries to run on each entity. Each query will create separate result columns.")
             
