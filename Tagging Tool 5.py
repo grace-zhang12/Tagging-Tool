@@ -751,7 +751,7 @@ def create_streamlit_app():
     st.title("🏷️ Tagging Tool")
     st.markdown("Tag any entities using AI with customizable taxonomies or prompts")
     
-    # User Guide - expandable section
+    # User Guide - expandable section (always visible at top)
     with st.expander("📚 Quick Start Guide (5 steps)", expanded=False):
         st.markdown("""
         ### 1. **Initialize** in the sidebar
@@ -793,7 +793,7 @@ def create_streamlit_app():
     if 'custom_queries' not in st.session_state:
         st.session_state.custom_queries = []
     
-    # Sidebar for configuration
+    # Sidebar for API Keys only
     with st.sidebar:
         st.header("⚙️ Configuration")
         
@@ -822,807 +822,13 @@ def create_streamlit_app():
                 else:
                     st.error("OpenAI API key is required (unless in test mode)")
         
-        # File Upload
-        st.header("📁 Data Input")
-        uploaded_file = st.file_uploader("Choose Excel/CSV file", 
-                                       type=['xlsx', 'xls', 'csv'])
-        
-        if uploaded_file:
-            # Load file
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-                sheet_names = ['main']
-            else:
-                excel_file = pd.ExcelFile(uploaded_file)
-                sheet_names = excel_file.sheet_names
-                
-                selected_sheet = st.selectbox("Select sheet", sheet_names)
-                df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
-            
-            st.session_state.df = df
-            st.success(f"Loaded {len(df)} rows")
-            
-            # Auto-backup input file
-            if st.session_state.tagger:
-                backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
-                st.info(f"📁 Input backup saved: {backup_path.name}")
-            
-            # Column selection
-            st.header("📊 Column Configuration")
-            columns = df.columns.tolist()
-            
-            name_column = st.selectbox("Entity name column", columns,
-                                      help="Column containing the names to tag")
-            
-            use_search = st.checkbox("Use web search (Perplexity)", 
-                                   value=False,
-                                   disabled=not perplexity_key)
-            
-            url_column = None
-            description_columns = []
-            
-            if use_search:
-                url_column = st.selectbox("URL column (optional)", 
-                                        ['None'] + columns)
-                url_column = None if url_column == 'None' else url_column
-            else:
-                description_columns = st.multiselect(
-                    "Description columns",
-                    columns,
-                    help="Columns containing descriptions or relevant text"
-                )
-            
-            context_columns = st.multiselect(
-                "Context columns (optional)",
-                [c for c in columns if c != name_column],
-                help="Additional columns to provide context for tagging"
-            )
-            
-            category_column = st.selectbox(
-                "Category column (optional)",
-                ['None'] + columns,
-                help="If your taxonomy has categories"
-            )
-            category_column = None if category_column == 'None' else category_column
-            
-            # Save configuration
-            st.session_state.config = {
-                'name_column': name_column,
-                'use_search': use_search,
-                'url_column': url_column,
-                'description_columns': description_columns,
-                'context_columns': context_columns,
-                'category_column': category_column,
-                'multi_select': False  # Will be set based on taxonomy
-            }
-    
-    # Main area
-    if st.session_state.tagger:
-        # Choose tagging method
-        st.header("🎯 Tagging Method")
-        
-        # Use dropdown instead of radio buttons
-        tagging_method = st.selectbox(
-            "Choose tagging method:",
-            ["Use Taxonomy", "Use Custom Prompt", "Use Multiple Custom Queries"],
-            help="Select how you want to classify your entities"
-        )
-        
-        if tagging_method == "Use Taxonomy":
-            # Only update config if file has been loaded
-            if 'df' in st.session_state and st.session_state.df is not None:
-                st.session_state.config['use_taxonomy'] = True
-                st.session_state.config['custom_queries'] = []  # Clear multiple queries
-            
-            # Updated layout with checkbox moved left and button right next to it
-            col1, col2, col3 = st.columns([2, 2, 6])
-            with col1:
-                st.subheader("📋 Taxonomy Setup")
-            with col2:
-                use_tag_categories_taxonomy = st.checkbox("Use tag categories", key="categories_taxonomy")
-            with col3:
-                create_tag_categories_helper("taxonomy")
-            
-            taxonomy_method = st.selectbox(
-                "How would you like to provide the taxonomy?",
-                ["Upload Excel file", "Paste as text", "Enter manually"]
-            )
-            
-            if taxonomy_method == "Upload Excel file":
-                taxonomy_file = st.file_uploader("Upload taxonomy file", 
-                                            type=['xlsx', 'xls'],
-                                            key="taxonomy_upload")
-                if taxonomy_file:
-                    tax_sheet = None
-                    if taxonomy_file.name.endswith(('.xlsx', '.xls')):
-                        tax_excel = pd.ExcelFile(taxonomy_file)
-                        if len(tax_excel.sheet_names) > 1:
-                            tax_sheet = st.selectbox("Select taxonomy sheet", 
-                                                    tax_excel.sheet_names)
-                    
-                    taxonomy = st.session_state.tagger.load_taxonomy_from_excel(
-                        taxonomy_file, tax_sheet)
-                    st.session_state.tagger.taxonomy = taxonomy
-                    st.success("✅ Taxonomy loaded!")
-                    
-                    # Display taxonomy
-                    with st.expander("View loaded taxonomy"):
-                        for category, tags in taxonomy.categories.items():
-                            st.write(f"**{category}**")
-                            for tag in tags:
-                                desc = taxonomy.descriptions.get(tag, "")
-                                st.write(f"- {tag}: {desc}" if desc else f"- {tag}")
-                
-                # Excel taxonomy formatting section
-                st.subheader("📋 Excel Taxonomy Formatting")
-                
-                if use_tag_categories_taxonomy:
-                    # When using tag categories
-                    st.markdown("Starting in cell A1, three columns: **Category**, **Tag**, and **Description** of tag.")
-                    
-                    # Show categorized example table
-                    categorized_data = {
-                        "Category": ["Technology", "Technology", "Healthcare", "Healthcare", "Finance", "Finance"],
-                        "Tag": ["Software", "Hardware", "Pharmaceutical", "Medical Devices", "Banking", "Fintech"],
-                        "Description": [
-                            "Companies that develop software products",
-                            "Companies that manufacture hardware", 
-                            "Drug development and manufacturing",
-                            "Medical equipment manufacturers",
-                            "Traditional banking services",
-                            "Financial technology companies"
-                        ]
-                    }
-                    categorized_df = pd.DataFrame(categorized_data)
-                    
-                    # Apply styling to make table text smaller
-                    st.markdown("""
-                    <style>
-                    .small-table table {
-                        font-size: 12px !important;
-                    }
-                    .small-table td, .small-table th {
-                        font-size: 12px !important;
-                        padding: 4px 8px !important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown('<div class="small-table">', unsafe_allow_html=True)
-                    st.table(categorized_df)
-                    st.markdown('</div>', unsafe_allow_html=True)
-                    
-                else:
-                    # When NOT using tag categories
-                    st.markdown("Starting in cell A1, two columns: **Tag** and **Description** of tag.")
-                    
-                    # Show simple example table
-                    simple_data = {
-                        "Tag": ["Software", "Hardware", "Consulting"],
-                        "Description": [
-                            "Companies that develop software",
-                            "Companies that manufacture hardware",
-                            "Professional services companies"
-                        ]
-                    }
-                    simple_df = pd.DataFrame(simple_data)
-                    
-                    # Apply styling to make table text smaller
-                    st.markdown("""
-                    <style>
-                    .small-table table {
-                        font-size: 12px !important;
-                    }
-                    .small-table td, .small-table th {
-                        font-size: 12px !important;
-                        padding: 4px 8px !important;
-                    }
-                    </style>
-                    """, unsafe_allow_html=True)
-                    
-                    st.markdown('<div class="small-table">', unsafe_allow_html=True)
-                    st.table(simple_df)
-                    st.markdown('</div>', unsafe_allow_html=True)
-            
-            elif taxonomy_method == "Paste as text":
-                st.markdown("Paste your taxonomy in YAML format:")
-                
-                # Conditional label and placeholder based on tag categories checkbox
-                if use_tag_categories_taxonomy:
-                    # When using tag categories
-                    taxonomy_label = "Taxonomy"
-                    taxonomy_placeholder = """categories:
-  Category1:
-    - Tag1
-    - Tag2
-  Category2:
-    - Tag3
-    - Tag4
-  Category3:
-    - Tag5
-    - Tag6
-descriptions:
-  Tag1: "Description of Tag1"
-  Tag2: "Description of Tag2"
-  Tag3: "Description of Tag3"
-  Tag4: "Description of Tag4"
-  Tag5: "Description of Tag5"
-  Tag6: "Description of Tag6"
-"""
-                else:
-                    # When NOT using tag categories
-                    taxonomy_label = "Taxonomy\n\nSince tags are not categorized, there is one category of tags called 'default'."
-                    taxonomy_placeholder = """categories:
-  default:
-    - Tag1
-    - Tag2
-    - Tag3
-descriptions:
-  Tag1: "Description of Tag1"
-  Tag2: "Description of Tag2"
-  Tag3: "Description of Tag3"
-"""
-                
-                taxonomy_text = st.text_area(taxonomy_label, height=300, 
-                                        placeholder=taxonomy_placeholder)
-                
-                if st.button("Parse Taxonomy"):
-                    try:
-                        # Parse YAML only
-                        taxonomy_dict = yaml.safe_load(taxonomy_text)
-                        taxonomy = st.session_state.tagger.load_taxonomy_from_dict(taxonomy_dict)
-                        st.session_state.tagger.taxonomy = taxonomy
-                        st.success("✅ Taxonomy parsed successfully!")
-                    except Exception as e:
-                        st.error(f"Failed to parse YAML taxonomy: {str(e)}")
-            
-            else:  # Manual entry
-                st.markdown("Enter tags manually:")
-                
-                categories = {}
-                descriptions = {}
-                
-                if use_tag_categories_taxonomy:
-                    # When using tag categories - show full interface
-                    num_categories = st.number_input("Number of categories", 1, 10, 1)
-                    
-                    for i in range(num_categories):
-                        with st.expander(f"Category {i+1}", expanded=i==0):
-                            cat_name = st.text_input(f"Category name", "default", key=f"cat_{i}")
-                            tags_text = st.text_area(
-                                "Tags (one per line)", 
-                                key=f"tags_{i}",
-                                help="Enter each tag on a new line"
-                            )
-                            st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
-                            
-                            if tags_text:
-                                tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
-                                categories[cat_name] = tags
-                                
-                                # Optional descriptions
-                                if st.checkbox("Add descriptions", key=f"desc_check_{i}"):
-                                    for tag in tags:
-                                        desc = st.text_input(f"Description for '{tag}'", 
-                                                        key=f"desc_{i}_{tag}")
-                                        if desc:
-                                            descriptions[tag] = desc
-                else:
-                    # When NOT using tag categories - simplified interface
-                    tags_text = st.text_area(
-                        "Tags (one per line)", 
-                        key="tags_simple",
-                        help="Enter each tag on a new line"
-                    )
-                    st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
-                    
-                    if tags_text:
-                        tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
-                        categories["default"] = tags
-                        
-                        # Optional descriptions
-                        if st.checkbox("Add descriptions", key="desc_check_simple"):
-                            for tag in tags:
-                                desc = st.text_input(f"Description for '{tag}'", 
-                                                key=f"desc_simple_{tag}")
-                                if desc:
-                                    descriptions[tag] = desc
-                
-                if st.button("Create Taxonomy"):
-                    taxonomy = TaxonomyConfig(
-                        categories=categories,
-                        descriptions=descriptions
-                    )
-                    st.session_state.tagger.taxonomy = taxonomy
-                    st.success("✅ Taxonomy created!")
-        
-        elif tagging_method == "Use Custom Prompt":
-            # Only update config if file has been loaded
-            if 'df' in st.session_state and st.session_state.df is not None:
-                st.session_state.config['use_taxonomy'] = False
-                st.session_state.config['custom_queries'] = []  # Clear multiple queries
-            
-            st.subheader("✍️ Prompt Configuration")
-            st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
-            
-            # Preset prompts
-            preset_choice = st.selectbox(
-                "Choose a preset prompt or create custom:",
-                list(PRESET_PROMPTS.keys())
-            )
-            
-            if preset_choice == "Custom Analysis":
-                custom_prompt = st.text_area(
-                    "Enter your custom prompt:",
-                    height=200,
-                    placeholder="""Example: You are an expert analyst. Based on the entity description, determine if this is a high-growth potential company. Consider factors like innovation, market opportunity, and scalability. Respond with "High Growth", "Moderate Growth", or "Low Growth" followed by your reasoning."""
-                )
-            else:
-                custom_prompt = st.text_area(
-                    "Prompt (you can edit):",
-                    value=PRESET_PROMPTS[preset_choice],
-                    height=200
-                )
-            
-            st.session_state.config['custom_prompt'] = custom_prompt
-            
-            # Show example
-            with st.expander("💡 Prompt Tips"):
-                st.markdown("""
-                **Tips for writing effective prompts:**
-                - Be specific about what you want to classify or analyze
-                - Define clear categories or output format
-                - Include any specific criteria for classification
-                - Ask for reasoning to understand the AI's decision
-                
-                **Example format:**
-                "You are an expert at [domain]. Analyze the entity and classify it as [categories]. 
-                Consider [specific factors]. Provide your answer as '[Output format]' with explanation."
-                """)
-        
-        else:  # Use Multiple Custom Queries
-            # Only update config if file has been loaded
-            if 'df' in st.session_state and st.session_state.df is not None:
-                st.session_state.config['use_taxonomy'] = False
-                st.session_state.config['custom_prompt'] = None  # Clear single prompt
-            
-            st.subheader("✍️ Multiple Query Configuration")
-            st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
-            
-            st.info("Configure multiple custom queries to run on each entity. Each query will create separate result columns.")
-            
-            # Add new query
-            with st.expander("➕ Add New Query", expanded=True):
-                query_name = st.text_input("Query Name", 
-                                        placeholder="e.g., Industry_Analysis",
-                                        help="This will be used as the prefix for result columns")
-                
-                # Preset or custom
-                use_preset = st.checkbox("Use preset prompt")
-                
-                if use_preset:
-                    preset_choice = st.selectbox(
-                        "Choose preset:",
-                        list(PRESET_PROMPTS.keys()),
-                        key="preset_multi"
-                    )
-                    if preset_choice == "Custom Analysis":
-                        query_prompt = st.text_area(
-                            "Enter prompt:",
-                            height=150,
-                            key="prompt_multi"
-                        )
-                    else:
-                        query_prompt = st.text_area(
-                            "Prompt (you can edit):",
-                            value=PRESET_PROMPTS[preset_choice],
-                            height=150,
-                            key="prompt_multi"
-                        )
-                else:
-                    query_prompt = st.text_area(
-                        "Enter custom prompt:",
-                        height=150,
-                        placeholder="Enter your analysis prompt here...",
-                        key="prompt_multi"
-                    )
-                
-                query_use_search = st.checkbox("Use web search for this query", 
-                                            value=st.session_state.config.get('use_search', False),
-                                            key="search_multi")
-                
-                if st.button("Add Query", type="primary"):
-                    if query_name and query_prompt:
-                        # Add to session state
-                        if 'custom_queries' not in st.session_state:
-                            st.session_state.custom_queries = []
-                        
-                        st.session_state.custom_queries.append({
-                            'name': query_name,
-                            'prompt': query_prompt,
-                            'use_search': query_use_search
-                        })
-                        st.success(f"✅ Query '{query_name}' added!")
-                        st.rerun()
-                    else:
-                        st.error("Please provide both a name and prompt for the query")
-            
-            # Display existing queries
-            if st.session_state.custom_queries:
-                st.subheader("📋 Configured Queries")
-                
-                for i, query in enumerate(st.session_state.custom_queries):
-                    with st.expander(f"Query {i+1}: {query['name']}", expanded=False):
-                        st.text(f"Name: {query['name']}")
-                        st.text(f"Use Search: {'Yes' if query['use_search'] else 'No'}")
-                        st.text("Prompt:")
-                        st.code(query['prompt'], language=None)
-                        
-                        if st.button(f"Remove", key=f"remove_{i}"):
-                            st.session_state.custom_queries.pop(i)
-                            st.rerun()
-                
-                # Update config with queries
-                st.session_state.config['custom_queries'] = st.session_state.custom_queries
-            else:
-                st.warning("No queries configured yet. Add at least one query to proceed.")
-        
-        # Processing options
-        ready_to_process = False
-        
-        if tagging_method == "Use Taxonomy" and st.session_state.tagger.taxonomy:
-            ready_to_process = True
-        elif tagging_method == "Use Custom Prompt" and st.session_state.config.get('custom_prompt'):
-            ready_to_process = True
-        elif tagging_method == "Use Multiple Custom Queries" and st.session_state.custom_queries:
-            ready_to_process = True
-        
-        if hasattr(st.session_state, 'df') and st.session_state.df is not None and ready_to_process:
-            st.header("🚀 Processing Options")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                if tagging_method == "Use Taxonomy":
-                    multi_select = st.checkbox("Allow multiple tags per entity")
-                    if 'config' in st.session_state:
-                        st.session_state.config['multi_select'] = multi_select
-            
-            with col2:
-                max_workers = st.number_input("Parallel threads", 1, 100, 5)
-            
-            with col3:
-                batch_size = st.number_input("Checkpoint batch size", 10, 1000, 100)
-            
-            # Search retry settings
-            if st.session_state.config.get('use_search') or any(q.get('use_search') for q in st.session_state.config.get('custom_queries', [])):
-                with st.expander("🔄 Search Retry Settings", expanded=False):
-                    search_retries = st.slider(
-                        "Max retries for failed searches",
-                        min_value=0,
-                        max_value=10,
-                        value=3,
-                        help="Number of times to retry if Perplexity search fails (e.g., rate limiting)"
-                    )
-                    
-                    retry_delay = st.number_input(
-                        "Base retry delay (seconds)",
-                        min_value=0.5,
-                        max_value=10.0,
-                        value=1.0,
-                        step=0.5,
-                        help="Initial delay before retry. Doubles with each attempt (exponential backoff)"
-                    )
-                    
-                    st.info(f"Retry delays will be: {', '.join([f'{retry_delay * (2**i):.1f}s' for i in range(min(search_retries, 4))])}{' ...' if search_retries > 4 else ''}")
-                    
-                    st.session_state.config['search_max_retries'] = search_retries
-                    
-                    # Source citation option
-                    st.markdown("### 📚 Source Citations")
-                    st.info("Perplexity will be instructed to include source citations in its search results.")
-            
-            # Row selection
-            st.subheader("Select rows to process")
-
-            # Check if we're resuming from checkpoint
-            if hasattr(st.session_state, 'resume_processing') and st.session_state.resume_processing:
-                st.warning("📌 RESUMING FROM CHECKPOINT")
-                rows_to_process = st.session_state.remaining_df
-                st.info(f"Will process {len(rows_to_process)} remaining rows")
-                
-                # Clear the resume flag after using it
-                del st.session_state.resume_processing
-            else:
-                # Normal row selection
-                process_all = st.checkbox("Process all rows", value=True)
-                
-                if not process_all:
-                    if 'config' in st.session_state and st.session_state.config.get('category_column'):
-                        # Filter by category
-                        categories = st.session_state.df[st.session_state.config['category_column']].unique()
-                        selected_categories = st.multiselect("Select categories", categories)
-                        
-                        if selected_categories:
-                            mask = st.session_state.df[st.session_state.config['category_column']].isin(selected_categories)
-                            rows_to_process = st.session_state.df[mask]
-                        else:
-                            rows_to_process = st.session_state.df
-                    else:
-                        # Manual row range
-                        total_rows = len(st.session_state.df)
-                        row_range = st.slider("Select row range", 0, total_rows, (0, min(100, total_rows)))
-                        rows_to_process = st.session_state.df.iloc[row_range[0]:row_range[1]]
-                else:
-                    rows_to_process = st.session_state.df
-
-            st.info(f"Will process {len(rows_to_process)} rows")            
-                
-            # Start processing
-            if st.button("🏁 Start Tagging", type="primary", disabled=st.session_state.processing):
-                st.session_state.processing = True
-                
-                # Initialize results - preserve existing if resuming from checkpoint
-                if hasattr(st.session_state, 'existing_results'):
-                    # Starting with existing results from checkpoint
-                    initial_results = st.session_state.existing_results.copy()
-                    st.info(f"Starting with {len(initial_results)} existing results from checkpoint")
-                else:
-                    # Fresh start
-                    initial_results = []
-                                
-                # Show test mode warning
-                if st.session_state.tagger.test_mode:
-                    st.warning("🧪 Running in TEST MODE - No actual API calls will be made")
-                
-                # Progress tracking
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                results_placeholder = st.empty()
-                
-                # Process entities
-                results = []
-                errors = []
-                
-                # Test mode limit
-                if st.session_state.tagger.test_mode and len(rows_to_process) > 10:
-                    st.info("Test mode: Limiting to first 10 rows")
-                    rows_to_process = rows_to_process.iloc[:10]
-                
-                # Use ThreadPoolExecutor for parallel processing
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    # Submit all tasks
-                    future_to_row = {
-                        executor.submit(
-                            st.session_state.tagger.process_single_entity,
-                            row.to_dict(),
-                            st.session_state.config,
-                            lambda msg: None  # Simple progress callback
-                        ): (idx, row) 
-                        for idx, row in rows_to_process.iterrows()
-                    }
-                    
-                    # Process completed tasks
-                    for future in as_completed(future_to_row):
-                        idx, row = future_to_row[future]
-                        
-                        try:
-                            entity_name = row[st.session_state.config['name_column']]
-                            
-                            # Update status
-                            completed = len(results) + len(errors) + 1
-                            status_text.text(f"Processing {completed}/{len(rows_to_process)}: {entity_name}")
-                            
-                            # Get result
-                            result = future.result()
-                            results.append(result)
-                            
-                            # Update progress
-                            progress = completed / len(rows_to_process)
-                            progress_bar.progress(progress)
-                            
-                            # Save checkpoint (include initial results)
-                            all_results = initial_results + results
-                            if len(results) % batch_size == 0:
-                                checkpoint_path = st.session_state.tagger.save_checkpoint(
-                                    all_results, f"batch_{len(all_results)}"
-                                )
-                                status_text.text(f"Checkpoint saved: {checkpoint_path.name}")
-                            
-                            # Show live results
-                            if len(results) > 0:
-                                # Show last 5 results
-                                recent_results = results[-5:]
-                                results_df = pd.DataFrame(recent_results)
-                                
-                                # For multiple queries, show a subset of columns
-                                if st.session_state.config.get('custom_queries'):
-                                    # Show entity name and first query results
-                                    display_cols = [st.session_state.config['name_column']]
-                                    for query in st.session_state.config['custom_queries'][:2]:  # Show first 2 queries
-                                        query_name = query['name']
-                                        display_cols.extend([
-                                            f'{query_name}_Result',
-                                            f'{query_name}_Status'
-                                        ])
-                                    display_cols = [col for col in display_cols if col in results_df.columns]
-                                    results_placeholder.dataframe(results_df[display_cols])
-                                else:
-                                    results_placeholder.dataframe(results_df)
-                            
-                        except Exception as e:
-                            errors.append({
-                                'row': idx,
-                                'entity': row.get(st.session_state.config['name_column'], 'Unknown'),
-                                'error': str(e)
-                            })
-                            # Update progress even for errors
-                            completed = len(results) + len(errors)
-                            progress = completed / len(rows_to_process)
-                            progress_bar.progress(progress)
-                
-                # Combine initial results with new results
-                st.session_state.results = initial_results + results
-                st.session_state.processing = False
-                
-                # Clear the existing_results flag
-                if hasattr(st.session_state, 'existing_results'):
-                    del st.session_state.existing_results
-                
-                # Final summary
-                if st.session_state.config.get('custom_queries'):
-                    # Summary for multiple queries
-                    st.success(f"""
-                    ✅ Processing complete!
-                    - Total entities processed: {len(st.session_state.results)}
-                    - Queries run per entity: {len(st.session_state.config['custom_queries'])}
-                    - Total analyses performed: {len(st.session_state.results) * len(st.session_state.config['custom_queries'])}
-                    """)
-                    
-                    # Per-query statistics
-                    with st.expander("📊 Per-Query Statistics"):
-                        for query in st.session_state.config['custom_queries']:
-                            query_name = query['name']
-                            status_col = f'{query_name}_Status'
-                            
-                            if status_col in pd.DataFrame(st.session_state.results).columns:
-                                status_counts = pd.DataFrame(st.session_state.results)[status_col].value_counts()
-                                st.write(f"**{query_name}:**")
-                                for status, count in status_counts.items():
-                                    st.write(f"- {status}: {count}")
-                else:
-                    # Original summary
-                    success_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Success')
-                    error_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Error')
-                    search_error_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Search Error')
-                    
-                    st.success(f"""
-                    ✅ Processing complete!
-                    - Total in results: {len(st.session_state.results)}
-                    - Newly processed: {len(results)}
-                    - Successful: {success_count}
-                    - Search Errors: {search_error_count}
-                    - Other Errors: {error_count}
-                    """)
-                
-                # Save results
-                if st.session_state.results:
-                    results_df = pd.DataFrame(st.session_state.results)
-                    
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        # Download as Excel
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            results_df.to_excel(writer, index=False, sheet_name='Tagged Results')
-                        
-                        st.download_button(
-                            label="📥 Download Excel",
-                            data=output.getvalue(),
-                            file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    
-                    with col2:
-                        # Download as CSV
-                        csv = results_df.to_csv(index=False)
-                        st.download_button(
-                            label="📥 Download CSV",
-                            data=csv,
-                            file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                            mime="text/csv"
-                        )
-                    
-                    # Display results
-                    st.header("📊 Results")
-                    
-                    # Filter options
-                    show_filter = st.checkbox("Show filter options")
-                    if show_filter:
-                        filter_col1, filter_col2 = st.columns(2)
-                        
-                        if st.session_state.config.get('custom_queries'):
-                            # Filters for multiple queries
-                            with filter_col1:
-                                # Select which query to filter by
-                                query_names = [q['name'] for q in st.session_state.config['custom_queries']]
-                                selected_query = st.selectbox("Filter by query", ['All'] + query_names)
-                            
-                            with filter_col2:
-                                if selected_query != 'All':
-                                    status_col = f'{selected_query}_Status'
-                                    if status_col in results_df.columns:
-                                        status_filter = st.multiselect(
-                                            f"Filter by {selected_query} status",
-                                            results_df[status_col].unique(),
-                                            default=results_df[status_col].unique()
-                                        )
-                                        filtered_df = results_df[results_df[status_col].isin(status_filter)]
-                                    else:
-                                        filtered_df = results_df
-                                else:
-                                    filtered_df = results_df
-                        else:
-                            # Original filters
-                            with filter_col1:
-                                status_filter = st.multiselect(
-                                    "Filter by status",
-                                    results_df['Status'].unique() if 'Status' in results_df.columns else [],
-                                    default=results_df['Status'].unique() if 'Status' in results_df.columns else []
-                                )
-                            with filter_col2:
-                                if 'Tagged_Result' in results_df.columns:
-                                    tag_filter = st.multiselect(
-                                        "Filter by tag",
-                                        results_df['Tagged_Result'].unique(),
-                                        default=results_df['Tagged_Result'].unique()
-                                    )
-                                else:
-                                    tag_filter = None
-                            
-                            # Apply filters
-                            if 'Status' in results_df.columns:
-                                filtered_df = results_df[results_df['Status'].isin(status_filter)]
-                            else:
-                                filtered_df = results_df
-                                
-                            if tag_filter and 'Tagged_Result' in results_df.columns:
-                                filtered_df = filtered_df[filtered_df['Tagged_Result'].isin(tag_filter)]
-                        
-                        st.dataframe(filtered_df, use_container_width=True)
-                    else:
-                        st.dataframe(results_df, use_container_width=True)
-                    
-                    # Error report
-                    if errors:
-                        st.header("⚠️ Processing Errors")
-                        error_df = pd.DataFrame(errors)
-                        st.dataframe(error_df)
-                    
-                    # Search errors for multiple queries
-                    if st.session_state.config.get('custom_queries'):
-                        search_error_queries = []
-                        for query in st.session_state.config['custom_queries']:
-                            query_name = query['name']
-                            status_col = f'{query_name}_Status'
-                            if status_col in results_df.columns:
-                                search_errors = results_df[results_df[status_col] == 'Search Error']
-                                if len(search_errors) > 0:
-                                    search_error_queries.append((query_name, len(search_errors)))
-                        
-                        if search_error_queries:
-                            st.warning("⚠️ Search Errors by Query:")
-                            for query_name, count in search_error_queries:
-                                st.write(f"- {query_name}: {count} entities failed due to search errors")
-        
-        # Checkpoint management
-        with st.sidebar:
+        # Checkpoint management (moved here to keep sidebar functionality)
+        if st.session_state.tagger:
             st.header("💾 Checkpoints & Backups")
             
             # Backup management
             with st.expander("📁 Backups"):
-                backup_files = list(st.session_state.tagger.backup_dir.glob("*.xlsx")) if st.session_state.tagger else []
+                backup_files = list(st.session_state.tagger.backup_dir.glob("*.xlsx"))
                 
                 if backup_files:
                     st.write(f"Found {len(backup_files)} backup(s)")
@@ -1647,7 +853,7 @@ descriptions:
             
             # Checkpoint management
             with st.expander("💾 Checkpoints"):
-                checkpoint_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl")) if st.session_state.tagger else []
+                checkpoint_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl"))
                 
                 if checkpoint_files:
                     selected_checkpoint = st.selectbox(
@@ -1697,7 +903,812 @@ descriptions:
                 if st.button("Clear All Checkpoints"):
                     for f in checkpoint_files:
                         f.unlink()
-                    st.success("All checkpoints cleared")    
+                    st.success("All checkpoints cleared")
+    
+    # Main area with tabs
+    if st.session_state.tagger:
+        # Create tabs
+        tab1, tab2 = st.tabs(["Tagging Method and Configuration", "Data Input and Column Configuration"])
+        
+        with tab1:
+            # Choose tagging method
+            st.header("🎯 Tagging Method")
+            
+            # Use dropdown instead of radio buttons
+            tagging_method = st.selectbox(
+                "Choose tagging method:",
+                ["Use Taxonomy", "Use Custom Prompt", "Use Multiple Custom Queries"],
+                help="Select how you want to classify your entities"
+            )
+            
+            if tagging_method == "Use Taxonomy":
+                # Only update config if file has been loaded
+                if 'df' in st.session_state and st.session_state.df is not None:
+                    st.session_state.config['use_taxonomy'] = True
+                    st.session_state.config['custom_queries'] = []  # Clear multiple queries
+                
+                # Updated layout with checkbox moved left and button right next to it
+                col1, col2, col3 = st.columns([2, 2, 6])
+                with col1:
+                    st.subheader("📋 Taxonomy Setup")
+                with col2:
+                    use_tag_categories_taxonomy = st.checkbox("Use tag categories", key="categories_taxonomy")
+                with col3:
+                    create_tag_categories_helper("taxonomy")
+                
+                taxonomy_method = st.selectbox(
+                    "How would you like to provide the taxonomy?",
+                    ["Upload Excel file", "Paste as text", "Enter manually"]
+                )
+                
+                if taxonomy_method == "Upload Excel file":
+                    taxonomy_file = st.file_uploader("Upload taxonomy file", 
+                                                type=['xlsx', 'xls'],
+                                                key="taxonomy_upload")
+                    if taxonomy_file:
+                        tax_sheet = None
+                        if taxonomy_file.name.endswith(('.xlsx', '.xls')):
+                            tax_excel = pd.ExcelFile(taxonomy_file)
+                            if len(tax_excel.sheet_names) > 1:
+                                tax_sheet = st.selectbox("Select taxonomy sheet", 
+                                                        tax_excel.sheet_names)
+                        
+                        taxonomy = st.session_state.tagger.load_taxonomy_from_excel(
+                            taxonomy_file, tax_sheet)
+                        st.session_state.tagger.taxonomy = taxonomy
+                        st.success("✅ Taxonomy loaded!")
+                        
+                        # Display taxonomy
+                        with st.expander("View loaded taxonomy"):
+                            for category, tags in taxonomy.categories.items():
+                                st.write(f"**{category}**")
+                                for tag in tags:
+                                    desc = taxonomy.descriptions.get(tag, "")
+                                    st.write(f"- {tag}: {desc}" if desc else f"- {tag}")
+                    
+                    # Excel taxonomy formatting section
+                    st.subheader("📋 Excel Taxonomy Formatting")
+                    
+                    if use_tag_categories_taxonomy:
+                        # When using tag categories
+                        st.markdown("Starting in cell A1, three columns: **Category**, **Tag**, and **Description** of tag.")
+                        
+                        # Show categorized example table
+                        categorized_data = {
+                            "Category": ["Technology", "Technology", "Healthcare", "Healthcare", "Finance", "Finance"],
+                            "Tag": ["Software", "Hardware", "Pharmaceutical", "Medical Devices", "Banking", "Fintech"],
+                            "Description": [
+                                "Companies that develop software products",
+                                "Companies that manufacture hardware", 
+                                "Drug development and manufacturing",
+                                "Medical equipment manufacturers",
+                                "Traditional banking services",
+                                "Financial technology companies"
+                            ]
+                        }
+                        categorized_df = pd.DataFrame(categorized_data)
+                        
+                        # Apply styling to make table text smaller
+                        st.markdown("""
+                        <style>
+                        .small-table table {
+                            font-size: 12px !important;
+                        }
+                        .small-table td, .small-table th {
+                            font-size: 12px !important;
+                            padding: 4px 8px !important;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown('<div class="small-table">', unsafe_allow_html=True)
+                        st.table(categorized_df)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        
+                    else:
+                        # When NOT using tag categories
+                        st.markdown("Starting in cell A1, two columns: **Tag** and **Description** of tag.")
+                        
+                        # Show simple example table
+                        simple_data = {
+                            "Tag": ["Software", "Hardware", "Consulting"],
+                            "Description": [
+                                "Companies that develop software",
+                                "Companies that manufacture hardware",
+                                "Professional services companies"
+                            ]
+                        }
+                        simple_df = pd.DataFrame(simple_data)
+                        
+                        # Apply styling to make table text smaller
+                        st.markdown("""
+                        <style>
+                        .small-table table {
+                            font-size: 12px !important;
+                        }
+                        .small-table td, .small-table th {
+                            font-size: 12px !important;
+                            padding: 4px 8px !important;
+                        }
+                        </style>
+                        """, unsafe_allow_html=True)
+                        
+                        st.markdown('<div class="small-table">', unsafe_allow_html=True)
+                        st.table(simple_df)
+                        st.markdown('</div>', unsafe_allow_html=True)
+                
+                elif taxonomy_method == "Paste as text":
+                    st.markdown("Paste your taxonomy in YAML format:")
+                    
+                    # Conditional label and placeholder based on tag categories checkbox
+                    if use_tag_categories_taxonomy:
+                        # When using tag categories
+                        taxonomy_label = "Taxonomy"
+                        taxonomy_placeholder = """categories:
+  Category1:
+    - Tag1
+    - Tag2
+  Category2:
+    - Tag3
+    - Tag4
+  Category3:
+    - Tag5
+    - Tag6
+descriptions:
+  Tag1: "Description of Tag1"
+  Tag2: "Description of Tag2"
+  Tag3: "Description of Tag3"
+  Tag4: "Description of Tag4"
+  Tag5: "Description of Tag5"
+  Tag6: "Description of Tag6"
+"""
+                    else:
+                        # When NOT using tag categories
+                        taxonomy_label = "Taxonomy\n\nSince tags are not categorized, there is one category of tags called 'default'."
+                        taxonomy_placeholder = """categories:
+  default:
+    - Tag1
+    - Tag2
+    - Tag3
+descriptions:
+  Tag1: "Description of Tag1"
+  Tag2: "Description of Tag2"
+  Tag3: "Description of Tag3"
+"""
+                    
+                    taxonomy_text = st.text_area(taxonomy_label, height=300, 
+                                            placeholder=taxonomy_placeholder)
+                    
+                    if st.button("Parse Taxonomy"):
+                        try:
+                            # Parse YAML only
+                            taxonomy_dict = yaml.safe_load(taxonomy_text)
+                            taxonomy = st.session_state.tagger.load_taxonomy_from_dict(taxonomy_dict)
+                            st.session_state.tagger.taxonomy = taxonomy
+                            st.success("✅ Taxonomy parsed successfully!")
+                        except Exception as e:
+                            st.error(f"Failed to parse YAML taxonomy: {str(e)}")
+                
+                else:  # Manual entry
+                    st.markdown("Enter tags manually:")
+                    
+                    categories = {}
+                    descriptions = {}
+                    
+                    if use_tag_categories_taxonomy:
+                        # When using tag categories - show full interface
+                        num_categories = st.number_input("Number of categories", 1, 10, 1)
+                        
+                        for i in range(num_categories):
+                            with st.expander(f"Category {i+1}", expanded=i==0):
+                                cat_name = st.text_input(f"Category name", "default", key=f"cat_{i}")
+                                tags_text = st.text_area(
+                                    "Tags (one per line)", 
+                                    key=f"tags_{i}",
+                                    help="Enter each tag on a new line"
+                                )
+                                st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
+                                
+                                if tags_text:
+                                    tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
+                                    categories[cat_name] = tags
+                                    
+                                    # Optional descriptions
+                                    if st.checkbox("Add descriptions", key=f"desc_check_{i}"):
+                                        for tag in tags:
+                                            desc = st.text_input(f"Description for '{tag}'", 
+                                                            key=f"desc_{i}_{tag}")
+                                            if desc:
+                                                descriptions[tag] = desc
+                    else:
+                        # When NOT using tag categories - simplified interface
+                        tags_text = st.text_area(
+                            "Tags (one per line)", 
+                            key="tags_simple",
+                            help="Enter each tag on a new line"
+                        )
+                        st.markdown("*You will enter descriptions for each tag after entering the list of tags themselves and clicking \"Create Taxonomy\".*")
+                        
+                        if tags_text:
+                            tags = [t.strip() for t in tags_text.split('\n') if t.strip()]
+                            categories["default"] = tags
+                            
+                            # Optional descriptions
+                            if st.checkbox("Add descriptions", key="desc_check_simple"):
+                                for tag in tags:
+                                    desc = st.text_input(f"Description for '{tag}'", 
+                                                    key=f"desc_simple_{tag}")
+                                    if desc:
+                                        descriptions[tag] = desc
+                    
+                    if st.button("Create Taxonomy"):
+                        taxonomy = TaxonomyConfig(
+                            categories=categories,
+                            descriptions=descriptions
+                        )
+                        st.session_state.tagger.taxonomy = taxonomy
+                        st.success("✅ Taxonomy created!")
+            
+            elif tagging_method == "Use Custom Prompt":
+                # Only update config if file has been loaded
+                if 'df' in st.session_state and st.session_state.df is not None:
+                    st.session_state.config['use_taxonomy'] = False
+                    st.session_state.config['custom_queries'] = []  # Clear multiple queries
+                
+                st.subheader("✍️ Prompt Configuration")
+                st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
+                
+                # Preset prompts
+                preset_choice = st.selectbox(
+                    "Choose a preset prompt or create custom:",
+                    list(PRESET_PROMPTS.keys())
+                )
+                
+                if preset_choice == "Custom Analysis":
+                    custom_prompt = st.text_area(
+                        "Enter your custom prompt:",
+                        height=200,
+                        placeholder="""Example: You are an expert analyst. Based on the entity description, determine if this is a high-growth potential company. Consider factors like innovation, market opportunity, and scalability. Respond with "High Growth", "Moderate Growth", or "Low Growth" followed by your reasoning."""
+                    )
+                else:
+                    custom_prompt = st.text_area(
+                        "Prompt (you can edit):",
+                        value=PRESET_PROMPTS[preset_choice],
+                        height=200
+                    )
+                
+                st.session_state.config['custom_prompt'] = custom_prompt
+                
+                # Show example
+                with st.expander("💡 Prompt Tips"):
+                    st.markdown("""
+                    **Tips for writing effective prompts:**
+                    - Be specific about what you want to classify or analyze
+                    - Define clear categories or output format
+                    - Include any specific criteria for classification
+                    - Ask for reasoning to understand the AI's decision
+                    
+                    **Example format:**
+                    "You are an expert at [domain]. Analyze the entity and classify it as [categories]. 
+                    Consider [specific factors]. Provide your answer as '[Output format]' with explanation."
+                    """)
+            
+            else:  # Use Multiple Custom Queries
+                # Only update config if file has been loaded
+                if 'df' in st.session_state and st.session_state.df is not None:
+                    st.session_state.config['use_taxonomy'] = False
+                    st.session_state.config['custom_prompt'] = None  # Clear single prompt
+                
+                st.subheader("✍️ Multiple Query Configuration")
+                st.markdown("<small>Custom queries method is recommended only if required, i.e. if you do not have a complete list of tags for your task. If you have a list of tags, Taxonomy method is recommended for optimal results.</small>", unsafe_allow_html=True)
+                
+                st.info("Configure multiple custom queries to run on each entity. Each query will create separate result columns.")
+                
+                # Add new query
+                with st.expander("➕ Add New Query", expanded=True):
+                    query_name = st.text_input("Query Name", 
+                                            placeholder="e.g., Industry_Analysis",
+                                            help="This will be used as the prefix for result columns")
+                    
+                    # Preset or custom
+                    use_preset = st.checkbox("Use preset prompt")
+                    
+                    if use_preset:
+                        preset_choice = st.selectbox(
+                            "Choose preset:",
+                            list(PRESET_PROMPTS.keys()),
+                            key="preset_multi"
+                        )
+                        if preset_choice == "Custom Analysis":
+                            query_prompt = st.text_area(
+                                "Enter prompt:",
+                                height=150,
+                                key="prompt_multi"
+                            )
+                        else:
+                            query_prompt = st.text_area(
+                                "Prompt (you can edit):",
+                                value=PRESET_PROMPTS[preset_choice],
+                                height=150,
+                                key="prompt_multi"
+                            )
+                    else:
+                        query_prompt = st.text_area(
+                            "Enter custom prompt:",
+                            height=150,
+                            placeholder="Enter your analysis prompt here...",
+                            key="prompt_multi"
+                        )
+                    
+                    query_use_search = st.checkbox("Use web search for this query", 
+                                                value=st.session_state.config.get('use_search', False),
+                                                key="search_multi")
+                    
+                    if st.button("Add Query", type="primary"):
+                        if query_name and query_prompt:
+                            # Add to session state
+                            if 'custom_queries' not in st.session_state:
+                                st.session_state.custom_queries = []
+                            
+                            st.session_state.custom_queries.append({
+                                'name': query_name,
+                                'prompt': query_prompt,
+                                'use_search': query_use_search
+                            })
+                            st.success(f"✅ Query '{query_name}' added!")
+                            st.rerun()
+                        else:
+                            st.error("Please provide both a name and prompt for the query")
+                
+                # Display existing queries
+                if st.session_state.custom_queries:
+                    st.subheader("📋 Configured Queries")
+                    
+                    for i, query in enumerate(st.session_state.custom_queries):
+                        with st.expander(f"Query {i+1}: {query['name']}", expanded=False):
+                            st.text(f"Name: {query['name']}")
+                            st.text(f"Use Search: {'Yes' if query['use_search'] else 'No'}")
+                            st.text("Prompt:")
+                            st.code(query['prompt'], language=None)
+                            
+                            if st.button(f"Remove", key=f"remove_{i}"):
+                                st.session_state.custom_queries.pop(i)
+                                st.rerun()
+                    
+                    # Update config with queries
+                    st.session_state.config['custom_queries'] = st.session_state.custom_queries
+                else:
+                    st.warning("No queries configured yet. Add at least one query to proceed.")
+            
+            # Processing options (only shown if we have the necessary configurations)
+            ready_to_process = False
+            
+            if tagging_method == "Use Taxonomy" and st.session_state.tagger.taxonomy:
+                ready_to_process = True
+            elif tagging_method == "Use Custom Prompt" and st.session_state.config.get('custom_prompt'):
+                ready_to_process = True
+            elif tagging_method == "Use Multiple Custom Queries" and st.session_state.custom_queries:
+                ready_to_process = True
+            
+            if hasattr(st.session_state, 'df') and st.session_state.df is not None and ready_to_process:
+                st.header("🚀 Processing Options")
+                
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if tagging_method == "Use Taxonomy":
+                        multi_select = st.checkbox("Allow multiple tags per entity")
+                        if 'config' in st.session_state:
+                            st.session_state.config['multi_select'] = multi_select
+                
+                with col2:
+                    max_workers = st.number_input("Parallel threads", 1, 100, 5)
+                
+                with col3:
+                    batch_size = st.number_input("Checkpoint batch size", 10, 1000, 100)
+                
+                # Search retry settings
+                if st.session_state.config.get('use_search') or any(q.get('use_search') for q in st.session_state.config.get('custom_queries', [])):
+                    with st.expander("🔄 Search Retry Settings", expanded=False):
+                        search_retries = st.slider(
+                            "Max retries for failed searches",
+                            min_value=0,
+                            max_value=10,
+                            value=3,
+                            help="Number of times to retry if Perplexity search fails (e.g., rate limiting)"
+                        )
+                        
+                        retry_delay = st.number_input(
+                            "Base retry delay (seconds)",
+                            min_value=0.5,
+                            max_value=10.0,
+                            value=1.0,
+                            step=0.5,
+                            help="Initial delay before retry. Doubles with each attempt (exponential backoff)"
+                        )
+                        
+                        st.info(f"Retry delays will be: {', '.join([f'{retry_delay * (2**i):.1f}s' for i in range(min(search_retries, 4))])}{' ...' if search_retries > 4 else ''}")
+                        
+                        st.session_state.config['search_max_retries'] = search_retries
+                        
+                        # Source citation option
+                        st.markdown("### 📚 Source Citations")
+                        st.info("Perplexity will be instructed to include source citations in its search results.")
+                
+                # Row selection
+                st.subheader("Select rows to process")
+
+                # Check if we're resuming from checkpoint
+                if hasattr(st.session_state, 'resume_processing') and st.session_state.resume_processing:
+                    st.warning("📌 RESUMING FROM CHECKPOINT")
+                    rows_to_process = st.session_state.remaining_df
+                    st.info(f"Will process {len(rows_to_process)} remaining rows")
+                    
+                    # Clear the resume flag after using it
+                    del st.session_state.resume_processing
+                else:
+                    # Normal row selection
+                    process_all = st.checkbox("Process all rows", value=True)
+                    
+                    if not process_all:
+                        if 'config' in st.session_state and st.session_state.config.get('category_column'):
+                            # Filter by category
+                            categories = st.session_state.df[st.session_state.config['category_column']].unique()
+                            selected_categories = st.multiselect("Select categories", categories)
+                            
+                            if selected_categories:
+                                mask = st.session_state.df[st.session_state.config['category_column']].isin(selected_categories)
+                                rows_to_process = st.session_state.df[mask]
+                            else:
+                                rows_to_process = st.session_state.df
+                        else:
+                            # Manual row range
+                            total_rows = len(st.session_state.df)
+                            row_range = st.slider("Select row range", 0, total_rows, (0, min(100, total_rows)))
+                            rows_to_process = st.session_state.df.iloc[row_range[0]:row_range[1]]
+                    else:
+                        rows_to_process = st.session_state.df
+
+                st.info(f"Will process {len(rows_to_process)} rows")            
+                    
+                # Start processing
+                if st.button("🏁 Start Tagging", type="primary", disabled=st.session_state.processing):
+                    st.session_state.processing = True
+                    
+                    # Initialize results - preserve existing if resuming from checkpoint
+                    if hasattr(st.session_state, 'existing_results'):
+                        # Starting with existing results from checkpoint
+                        initial_results = st.session_state.existing_results.copy()
+                        st.info(f"Starting with {len(initial_results)} existing results from checkpoint")
+                    else:
+                        # Fresh start
+                        initial_results = []
+                                    
+                    # Show test mode warning
+                    if st.session_state.tagger.test_mode:
+                        st.warning("🧪 Running in TEST MODE - No actual API calls will be made")
+                    
+                    # Progress tracking
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    results_placeholder = st.empty()
+                    
+                    # Process entities
+                    results = []
+                    errors = []
+                    
+                    # Test mode limit
+                    if st.session_state.tagger.test_mode and len(rows_to_process) > 10:
+                        st.info("Test mode: Limiting to first 10 rows")
+                        rows_to_process = rows_to_process.iloc[:10]
+                    
+                    # Use ThreadPoolExecutor for parallel processing
+                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                        # Submit all tasks
+                        future_to_row = {
+                            executor.submit(
+                                st.session_state.tagger.process_single_entity,
+                                row.to_dict(),
+                                st.session_state.config,
+                                lambda msg: None  # Simple progress callback
+                            ): (idx, row) 
+                            for idx, row in rows_to_process.iterrows()
+                        }
+                        
+                        # Process completed tasks
+                        for future in as_completed(future_to_row):
+                            idx, row = future_to_row[future]
+                            
+                            try:
+                                entity_name = row[st.session_state.config['name_column']]
+                                
+                                # Update status
+                                completed = len(results) + len(errors) + 1
+                                status_text.text(f"Processing {completed}/{len(rows_to_process)}: {entity_name}")
+                                
+                                # Get result
+                                result = future.result()
+                                results.append(result)
+                                
+                                # Update progress
+                                progress = completed / len(rows_to_process)
+                                progress_bar.progress(progress)
+                                
+                                # Save checkpoint (include initial results)
+                                all_results = initial_results + results
+                                if len(results) % batch_size == 0:
+                                    checkpoint_path = st.session_state.tagger.save_checkpoint(
+                                        all_results, f"batch_{len(all_results)}"
+                                    )
+                                    status_text.text(f"Checkpoint saved: {checkpoint_path.name}")
+                                
+                                # Show live results
+                                if len(results) > 0:
+                                    # Show last 5 results
+                                    recent_results = results[-5:]
+                                    results_df = pd.DataFrame(recent_results)
+                                    
+                                    # For multiple queries, show a subset of columns
+                                    if st.session_state.config.get('custom_queries'):
+                                        # Show entity name and first query results
+                                        display_cols = [st.session_state.config['name_column']]
+                                        for query in st.session_state.config['custom_queries'][:2]:  # Show first 2 queries
+                                            query_name = query['name']
+                                            display_cols.extend([
+                                                f'{query_name}_Result',
+                                                f'{query_name}_Status'
+                                            ])
+                                        display_cols = [col for col in display_cols if col in results_df.columns]
+                                        results_placeholder.dataframe(results_df[display_cols])
+                                    else:
+                                        results_placeholder.dataframe(results_df)
+                                
+                            except Exception as e:
+                                errors.append({
+                                    'row': idx,
+                                    'entity': row.get(st.session_state.config['name_column'], 'Unknown'),
+                                    'error': str(e)
+                                })
+                                # Update progress even for errors
+                                completed = len(results) + len(errors)
+                                progress = completed / len(rows_to_process)
+                                progress_bar.progress(progress)
+                    
+                    # Combine initial results with new results
+                    st.session_state.results = initial_results + results
+                    st.session_state.processing = False
+                    
+                    # Clear the existing_results flag
+                    if hasattr(st.session_state, 'existing_results'):
+                        del st.session_state.existing_results
+                    
+                    # Final summary
+                    if st.session_state.config.get('custom_queries'):
+                        # Summary for multiple queries
+                        st.success(f"""
+                        ✅ Processing complete!
+                        - Total entities processed: {len(st.session_state.results)}
+                        - Queries run per entity: {len(st.session_state.config['custom_queries'])}
+                        - Total analyses performed: {len(st.session_state.results) * len(st.session_state.config['custom_queries'])}
+                        """)
+                        
+                        # Per-query statistics
+                        with st.expander("📊 Per-Query Statistics"):
+                            for query in st.session_state.config['custom_queries']:
+                                query_name = query['name']
+                                status_col = f'{query_name}_Status'
+                                
+                                if status_col in pd.DataFrame(st.session_state.results).columns:
+                                    status_counts = pd.DataFrame(st.session_state.results)[status_col].value_counts()
+                                    st.write(f"**{query_name}:**")
+                                    for status, count in status_counts.items():
+                                        st.write(f"- {status}: {count}")
+                    else:
+                        # Original summary
+                        success_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Success')
+                        error_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Error')
+                        search_error_count = sum(1 for r in st.session_state.results if r.get('Status') == 'Search Error')
+                        
+                        st.success(f"""
+                        ✅ Processing complete!
+                        - Total in results: {len(st.session_state.results)}
+                        - Newly processed: {len(results)}
+                        - Successful: {success_count}
+                        - Search Errors: {search_error_count}
+                        - Other Errors: {error_count}
+                        """)
+                    
+                    # Save results
+                    if st.session_state.results:
+                        results_df = pd.DataFrame(st.session_state.results)
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            # Download as Excel
+                            output = io.BytesIO()
+                            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                                results_df.to_excel(writer, index=False, sheet_name='Tagged Results')
+                            
+                            st.download_button(
+                                label="📥 Download Excel",
+                                data=output.getvalue(),
+                                file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            )
+                        
+                        with col2:
+                            # Download as CSV
+                            csv = results_df.to_csv(index=False)
+                            st.download_button(
+                                label="📥 Download CSV",
+                                data=csv,
+                                file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv"
+                            )
+                        
+                        # Display results
+                        st.header("📊 Results")
+                        
+                        # Filter options
+                        show_filter = st.checkbox("Show filter options")
+                        if show_filter:
+                            filter_col1, filter_col2 = st.columns(2)
+                            
+                            if st.session_state.config.get('custom_queries'):
+                                # Filters for multiple queries
+                                with filter_col1:
+                                    # Select which query to filter by
+                                    query_names = [q['name'] for q in st.session_state.config['custom_queries']]
+                                    selected_query = st.selectbox("Filter by query", ['All'] + query_names)
+                                
+                                with filter_col2:
+                                    if selected_query != 'All':
+                                        status_col = f'{selected_query}_Status'
+                                        if status_col in results_df.columns:
+                                            status_filter = st.multiselect(
+                                                f"Filter by {selected_query} status",
+                                                results_df[status_col].unique(),
+                                                default=results_df[status_col].unique()
+                                            )
+                                            filtered_df = results_df[results_df[status_col].isin(status_filter)]
+                                        else:
+                                            filtered_df = results_df
+                                    else:
+                                        filtered_df = results_df
+                            else:
+                                # Original filters
+                                with filter_col1:
+                                    status_filter = st.multiselect(
+                                        "Filter by status",
+                                        results_df['Status'].unique() if 'Status' in results_df.columns else [],
+                                        default=results_df['Status'].unique() if 'Status' in results_df.columns else []
+                                    )
+                                with filter_col2:
+                                    if 'Tagged_Result' in results_df.columns:
+                                        tag_filter = st.multiselect(
+                                            "Filter by tag",
+                                            results_df['Tagged_Result'].unique(),
+                                            default=results_df['Tagged_Result'].unique()
+                                        )
+                                    else:
+                                        tag_filter = None
+                                
+                                # Apply filters
+                                if 'Status' in results_df.columns:
+                                    filtered_df = results_df[results_df['Status'].isin(status_filter)]
+                                else:
+                                    filtered_df = results_df
+                                    
+                                if tag_filter and 'Tagged_Result' in results_df.columns:
+                                    filtered_df = filtered_df[filtered_df['Tagged_Result'].isin(tag_filter)]
+                            
+                            st.dataframe(filtered_df, use_container_width=True)
+                        else:
+                            st.dataframe(results_df, use_container_width=True)
+                        
+                        # Error report
+                        if errors:
+                            st.header("⚠️ Processing Errors")
+                            error_df = pd.DataFrame(errors)
+                            st.dataframe(error_df)
+                        
+                        # Search errors for multiple queries
+                        if st.session_state.config.get('custom_queries'):
+                            search_error_queries = []
+                            for query in st.session_state.config['custom_queries']:
+                                query_name = query['name']
+                                status_col = f'{query_name}_Status'
+                                if status_col in results_df.columns:
+                                    search_errors = results_df[results_df[status_col] == 'Search Error']
+                                    if len(search_errors) > 0:
+                                        search_error_queries.append((query_name, len(search_errors)))
+                            
+                            if search_error_queries:
+                                st.warning("⚠️ Search Errors by Query:")
+                                for query_name, count in search_error_queries:
+                                    st.write(f"- {query_name}: {count} entities failed due to search errors")
+        
+        with tab2:
+            # Data Input and Column Configuration
+            st.header("📁 Data Input")
+            uploaded_file = st.file_uploader("Choose Excel/CSV file", 
+                                           type=['xlsx', 'xls', 'csv'])
+            
+            if uploaded_file:
+                # Load file
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                    sheet_names = ['main']
+                else:
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    sheet_names = excel_file.sheet_names
+                    
+                    selected_sheet = st.selectbox("Select sheet", sheet_names)
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                
+                st.session_state.df = df
+                st.success(f"Loaded {len(df)} rows")
+                
+                # Auto-backup input file
+                if st.session_state.tagger:
+                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
+                    st.info(f"📁 Input backup saved: {backup_path.name}")
+                
+                # Column selection
+                st.header("📊 Column Configuration")
+                columns = df.columns.tolist()
+                
+                name_column = st.selectbox("Entity name column", columns,
+                                          help="Column containing the names to tag")
+                
+                use_search = st.checkbox("Use web search (Perplexity)", 
+                                       value=False,
+                                       disabled=not perplexity_key)
+                
+                url_column = None
+                description_columns = []
+                
+                if use_search:
+                    url_column = st.selectbox("URL column (optional)", 
+                                            ['None'] + columns)
+                    url_column = None if url_column == 'None' else url_column
+                else:
+                    description_columns = st.multiselect(
+                        "Description columns",
+                        columns,
+                        help="Columns containing descriptions or relevant text"
+                    )
+                
+                context_columns = st.multiselect(
+                    "Context columns (optional)",
+                    [c for c in columns if c != name_column],
+                    help="Additional columns to provide context for tagging"
+                )
+                
+                category_column = st.selectbox(
+                    "Category column (optional)",
+                    ['None'] + columns,
+                    help="If your taxonomy has categories"
+                )
+                category_column = None if category_column == 'None' else category_column
+                
+                # Save configuration
+                st.session_state.config = {
+                    'name_column': name_column,
+                    'use_search': use_search,
+                    'url_column': url_column,
+                    'description_columns': description_columns,
+                    'context_columns': context_columns,
+                    'category_column': category_column,
+                    'multi_select': False  # Will be set based on taxonomy
+                }
+                
+                # Show data preview
+                st.subheader("📋 Data Preview")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.info(f"Showing first 10 rows of {len(df)} total rows")
+    
     else:
         st.warning("Please initialize the tagger with your API keys in the sidebar")
 
