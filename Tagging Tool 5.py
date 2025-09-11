@@ -297,7 +297,7 @@ Please find and provide information about {entity_name} that would be most relev
                 
                 # Use the responses API for custom prompts
                 response = self.openai_client.responses.create(
-                    model="gpt-5",
+                    model="gpt-4o-2024-08-06",
                     input=input_content
                 )
                 
@@ -342,7 +342,7 @@ Ensure your primary_tag and all secondary_tags are from the available tags list 
                 
                 # Use the responses.parse API with structured outputs
                 response = self.openai_client.responses.parse(
-                    model="gpt-5",
+                    model="gpt-4o-2024-08-06",
                     input=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": user_content}
@@ -384,7 +384,7 @@ Ensure your selected_tag is from the available tags list above."""
                 
                 # Use the responses.parse API with structured outputs
                 response = self.openai_client.responses.parse(
-                    model="gpt-5",
+                    model="gpt-4o-2024-08-06",
                     input=[
                         {"role": "system", "content": system_content},
                         {"role": "user", "content": user_content}
@@ -905,12 +905,111 @@ def create_streamlit_app():
                         f.unlink()
                     st.success("All checkpoints cleared")
     
-    # Main area with tabs
+    # Main area with tabs - SWAPPED ORDER
     if st.session_state.tagger:
-        # Create tabs - now with three tabs
-        tab1, tab2, tab3 = st.tabs(["Tagging Method and Configuration", "Data Input and Column Configuration", "Start Tagging"])
+        # Create tabs - now with reordered tabs
+        tab1, tab2, tab3 = st.tabs(["Data Input and Column Configuration", "Tagging Method and Configuration", "Start Tagging"])
         
         with tab1:
+            # Data Input and Column Configuration (moved from tab2)
+            st.header("📁 Data Input")
+            
+            # Add explanatory text in smaller font
+            st.markdown("""
+            <div style="font-size: 14px; color: #666; margin-bottom: 20px;">
+            Input one Excel file containing your entities to be tagged (and any other additional columns of information), formatted with column titles starting in cell A1.
+            <br><br>
+            <strong>Data Input columns:</strong>
+            <ul>
+                <li><strong>Entity to be tagged</strong> (required)</li>
+                <li><strong>'Description' column:</strong> Only applicable if not using Web Search; the main information the model reads about each entity to inform the tagging</li>
+                <li><strong>'URL' column:</strong> Optional, only applicable if using Web Search and you have specific websites you want to search, e.g. company websites</li>
+                <li><strong>'Context' column(s):</strong> Optional, extra fields (e.g. country, sector) the model can reference</li>
+                <li><strong>Category column:</strong> Only applicable if using tag categories, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)</li>
+            </ul>
+            The tool will output your original file with an added column containing tags (will add multiple columns containing tags if you use multiple custom queries).
+            </div>
+            """, unsafe_allow_html=True)
+            
+            uploaded_file = st.file_uploader("Choose Excel/CSV file", 
+                                           type=['xlsx', 'xls', 'csv'])
+            
+            if uploaded_file:
+                # Load file
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                    sheet_names = ['main']
+                else:
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    sheet_names = excel_file.sheet_names
+                    
+                    selected_sheet = st.selectbox("Select sheet", sheet_names)
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                
+                st.session_state.df = df
+                st.success(f"Loaded {len(df)} rows")
+                
+                # Auto-backup input file
+                if st.session_state.tagger:
+                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
+                    st.info(f"📁 Input backup saved: {backup_path.name}")
+                
+                # Column selection
+                st.header("📊 Column Configuration")
+                columns = df.columns.tolist()
+                
+                name_column = st.selectbox("Entity name column", columns,
+                                          help="Column containing the names to tag")
+                
+                use_search = st.checkbox("Use web search (Perplexity)", 
+                                       value=False,
+                                       disabled=not perplexity_key)
+                
+                url_column = None
+                description_columns = []
+                
+                if use_search:
+                    url_column = st.selectbox("URL column (optional)", 
+                                            ['None'] + columns)
+                    url_column = None if url_column == 'None' else url_column
+                else:
+                    description_columns = st.multiselect(
+                        "Description columns",
+                        columns,
+                        help="Columns containing descriptions or relevant text"
+                    )
+                
+                context_columns = st.multiselect(
+                    "Context columns (optional)",
+                    [c for c in columns if c != name_column],
+                    help="Additional columns to provide context for tagging"
+                )
+                
+                category_column = st.selectbox(
+                    "Category column (optional)",
+                    ['None'] + columns,
+                    help="If your taxonomy has categories"
+                )
+                category_column = None if category_column == 'None' else category_column
+                
+                # Save configuration
+                st.session_state.config = {
+                    'name_column': name_column,
+                    'use_search': use_search,
+                    'url_column': url_column,
+                    'description_columns': description_columns,
+                    'context_columns': context_columns,
+                    'category_column': category_column,
+                    'multi_select': False  # Will be set based on taxonomy
+                }
+                
+                # Show data preview
+                st.subheader("📋 Data Preview")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.info(f"Showing first 10 rows of {len(df)} total rows")
+
+        with tab2:
+            # Tagging Method and Configuration (moved from tab1)
             # Choose tagging method
             st.header("🎯 Tagging Method")
             
@@ -1280,109 +1379,11 @@ descriptions:
                 else:
                     st.warning("No queries configured yet. Add at least one query to proceed.")
         
-        with tab2:
-            # Data Input and Column Configuration
-            st.header("📁 Data Input")
-            
-            # Add explanatory text in smaller font
-            st.markdown("""
-            <div style="font-size: 14px; color: #666; margin-bottom: 20px;">
-            Input one Excel file containing your entities to be tagged (and any other additional columns of information), formatted with column titles starting in cell A1.
-            <br><br>
-            <strong>Data Input columns:</strong>
-            <ul>
-                <li><strong>Entity to be tagged</strong> (required)</li>
-                <li><strong>'Description' column:</strong> Only applicable if not using Web Search; the main information the model reads about each entity to inform the tagging</li>
-                <li><strong>'URL' column:</strong> Optional, only applicable if using Web Search and you have specific websites you want to search, e.g. company websites</li>
-                <li><strong>'Context' column(s):</strong> Optional, extra fields (e.g. country, sector) the model can reference</li>
-                <li><strong>Category column:</strong> Only applicable if using tag categories, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)</li>
-            </ul>
-            The tool will output your original file with an added column containing tags (will add multiple columns containing tags if you use multiple custom queries).
-            </div>
-            """, unsafe_allow_html=True)
-            
-            uploaded_file = st.file_uploader("Choose Excel/CSV file", 
-                                           type=['xlsx', 'xls', 'csv'])
-            
-            if uploaded_file:
-                # Load file
-                if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                    sheet_names = ['main']
-                else:
-                    excel_file = pd.ExcelFile(uploaded_file)
-                    sheet_names = excel_file.sheet_names
-                    
-                    selected_sheet = st.selectbox("Select sheet", sheet_names)
-                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
-                
-                st.session_state.df = df
-                st.success(f"Loaded {len(df)} rows")
-                
-                # Auto-backup input file
-                if st.session_state.tagger:
-                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
-                    st.info(f"📁 Input backup saved: {backup_path.name}")
-                
-                # Column selection
-                st.header("📊 Column Configuration")
-                columns = df.columns.tolist()
-                
-                name_column = st.selectbox("Entity name column", columns,
-                                          help="Column containing the names to tag")
-                
-                use_search = st.checkbox("Use web search (Perplexity)", 
-                                       value=False,
-                                       disabled=not perplexity_key)
-                
-                url_column = None
-                description_columns = []
-                
-                if use_search:
-                    url_column = st.selectbox("URL column (optional)", 
-                                            ['None'] + columns)
-                    url_column = None if url_column == 'None' else url_column
-                else:
-                    description_columns = st.multiselect(
-                        "Description columns",
-                        columns,
-                        help="Columns containing descriptions or relevant text"
-                    )
-                
-                context_columns = st.multiselect(
-                    "Context columns (optional)",
-                    [c for c in columns if c != name_column],
-                    help="Additional columns to provide context for tagging"
-                )
-                
-                category_column = st.selectbox(
-                    "Category column (optional)",
-                    ['None'] + columns,
-                    help="If your taxonomy has categories"
-                )
-                category_column = None if category_column == 'None' else category_column
-                
-                # Save configuration
-                st.session_state.config = {
-                    'name_column': name_column,
-                    'use_search': use_search,
-                    'url_column': url_column,
-                    'description_columns': description_columns,
-                    'context_columns': context_columns,
-                    'category_column': category_column,
-                    'multi_select': False  # Will be set based on taxonomy
-                }
-                
-                # Show data preview
-                st.subheader("📋 Data Preview")
-                st.dataframe(df.head(10), use_container_width=True)
-                st.info(f"Showing first 10 rows of {len(df)} total rows")
-        
         with tab3:
             # Processing Options (moved from tab1)
             st.header("🚀 Processing Options")
             
-            # Get the current tagging method from the selectbox in tab1
+            # Get the current tagging method from the selectbox in tab2
             # We need to retrieve it from the widget state
             current_method = None
             for widget_id, widget_value in st.session_state.items():
