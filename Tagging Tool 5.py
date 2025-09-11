@@ -263,26 +263,40 @@ Please find and provide information about {entity_name} that would be most relev
                     context = "\n\nAdditional context from data:\n"
                     context += "\n".join([f"{k}: {v}" for k, v in existing_data.items() if v])
                 
-                # Modified input content to ignore URLs
-                input_content = f"""{custom_prompt}
-
-IMPORTANT: Focus only on the textual information provided below. Ignore any URLs, website references, or source citations. Do not attempt to visit or access any websites.
-
-Entity: {entity_name}
-Description: {description}{context}"""
+                # Create structured output class for custom prompts
+                class CustomPromptOutput(BaseModel):
+                    result: str
+                    confidence: float
+                    reasoning: str
                 
-                # Use the responses API for custom prompts
-                response = self.openai_client.responses.create(
+                system_content = f"""{custom_prompt}
+
+IMPORTANT: Focus only on the textual information provided. Ignore any URLs, website references, or source citations. Do not attempt to visit or access any websites.
+
+For the reasoning field, provide a brief explanation (3 sentences max) that includes:
+1. Why you chose this particular classification
+2. What specific information from the description influenced your decision
+3. How any additional context factored into your decision"""
+                
+                user_content = f"Entity: {entity_name}\nDescription: {description}{context}"
+                
+                # Use the responses.parse API with structured outputs
+                response = self.openai_client.responses.parse(
                     model="gpt-4o-2024-08-06",
-                    input=input_content
+                    input=[
+                        {"role": "system", "content": system_content},
+                        {"role": "user", "content": user_content}
+                    ],
+                    text_format=CustomPromptOutput
                 )
                 
-                # For custom prompts, return the raw response
+                parsed = response.output_parsed
+                
                 return {
                     'status': 'success',
-                    'result': response.output_text,
-                    'confidence': 1.0,
-                    'reasoning': 'Custom prompt classification'
+                    'result': parsed.result,
+                    'confidence': parsed.confidence,
+                    'reasoning': parsed.reasoning
                 }
             
             # For taxonomy-based selection, use structured outputs with responses.parse
@@ -314,7 +328,12 @@ IMPORTANT: Focus only on the textual information provided. Ignore any URLs, webs
 Available tags:
 {tags_desc}
 
-Ensure your primary_tag and all secondary_tags are from the available tags list above."""
+Ensure your primary_tag and all secondary_tags are from the available tags list above.
+
+For the reasoning field, provide a brief explanation (3 sentences max) that includes:
+1. Why you chose the specific primary tag (and secondary tags if any)
+2. What key information from the entity description influenced your decision
+3. How any additional context data factored into your classification"""
                 
                 user_content = f"Entity: {entity_name}\nDescription: {description}{context}"
                 
@@ -358,7 +377,12 @@ IMPORTANT: Focus only on the textual information provided. Ignore any URLs, webs
 Available tags:
 {tags_desc}
 
-Ensure your selected_tag is from the available tags list above."""
+Ensure your selected_tag is from the available tags list above.
+
+For the reasoning field, provide a brief explanation (3 sentences max) that includes:
+1. Why you chose this specific tag over others
+2. What key information from the entity description influenced your decision
+3. How any additional context data factored into your classification"""
                 
                 user_content = f"Entity: {entity_name}\nDescription: {description}{context}"
                 
