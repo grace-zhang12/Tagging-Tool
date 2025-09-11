@@ -263,7 +263,13 @@ Please find and provide information about {entity_name} that would be most relev
                     context = "\n\nAdditional context from data:\n"
                     context += "\n".join([f"{k}: {v}" for k, v in existing_data.items() if v])
                 
-                input_content = f"{custom_prompt}\n\nEntity: {entity_name}\nDescription: {description}{context}"
+                # Modified input content to ignore URLs
+                input_content = f"""{custom_prompt}
+
+IMPORTANT: Focus only on the textual information provided below. Ignore any URLs, website references, or source citations. Do not attempt to visit or access any websites.
+
+Entity: {entity_name}
+Description: {description}{context}"""
                 
                 # Use the responses API for custom prompts
                 response = self.openai_client.responses.create(
@@ -302,6 +308,8 @@ Please find and provide information about {entity_name} that would be most relev
                 
                 system_content = f"""You are an expert at classifying entities based on the following taxonomy.
 Select multiple tags if appropriate, with one primary and optional secondary tags.
+
+IMPORTANT: Focus only on the textual information provided. Ignore any URLs, website references, or source citations. Do not attempt to visit or access any websites.
 
 Available tags:
 {tags_desc}
@@ -344,6 +352,8 @@ Ensure your primary_tag and all secondary_tags are from the available tags list 
                 
                 system_content = f"""You are an expert at classifying entities based on the following taxonomy.
 Select the single most appropriate tag.
+
+IMPORTANT: Focus only on the textual information provided. Ignore any URLs, website references, or source citations. Do not attempt to visit or access any websites.
 
 Available tags:
 {tags_desc}
