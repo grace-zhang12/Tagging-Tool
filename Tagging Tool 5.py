@@ -907,8 +907,8 @@ def create_streamlit_app():
     
     # Main area with tabs
     if st.session_state.tagger:
-        # Create tabs
-        tab1, tab2 = st.tabs(["Tagging Method and Configuration", "Data Input and Column Configuration"])
+        # Create tabs - now with three tabs
+        tab1, tab2, tab3 = st.tabs(["Tagging Method and Configuration", "Data Input and Column Configuration", "Start Tagging"])
         
         with tab1:
             # Choose tagging method
@@ -1279,24 +1279,127 @@ descriptions:
                     st.session_state.config['custom_queries'] = st.session_state.custom_queries
                 else:
                     st.warning("No queries configured yet. Add at least one query to proceed.")
+        
+        with tab2:
+            # Data Input and Column Configuration
+            st.header("📁 Data Input")
+            uploaded_file = st.file_uploader("Choose Excel/CSV file", 
+                                           type=['xlsx', 'xls', 'csv'])
             
-            # Processing options (only shown if we have the necessary configurations)
+            if uploaded_file:
+                # Load file
+                if uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                    sheet_names = ['main']
+                else:
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    sheet_names = excel_file.sheet_names
+                    
+                    selected_sheet = st.selectbox("Select sheet", sheet_names)
+                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
+                
+                st.session_state.df = df
+                st.success(f"Loaded {len(df)} rows")
+                
+                # Auto-backup input file
+                if st.session_state.tagger:
+                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
+                    st.info(f"📁 Input backup saved: {backup_path.name}")
+                
+                # Column selection
+                st.header("📊 Column Configuration")
+                columns = df.columns.tolist()
+                
+                name_column = st.selectbox("Entity name column", columns,
+                                          help="Column containing the names to tag")
+                
+                use_search = st.checkbox("Use web search (Perplexity)", 
+                                       value=False,
+                                       disabled=not perplexity_key)
+                
+                url_column = None
+                description_columns = []
+                
+                if use_search:
+                    url_column = st.selectbox("URL column (optional)", 
+                                            ['None'] + columns)
+                    url_column = None if url_column == 'None' else url_column
+                else:
+                    description_columns = st.multiselect(
+                        "Description columns",
+                        columns,
+                        help="Columns containing descriptions or relevant text"
+                    )
+                
+                context_columns = st.multiselect(
+                    "Context columns (optional)",
+                    [c for c in columns if c != name_column],
+                    help="Additional columns to provide context for tagging"
+                )
+                
+                category_column = st.selectbox(
+                    "Category column (optional)",
+                    ['None'] + columns,
+                    help="If your taxonomy has categories"
+                )
+                category_column = None if category_column == 'None' else category_column
+                
+                # Save configuration
+                st.session_state.config = {
+                    'name_column': name_column,
+                    'use_search': use_search,
+                    'url_column': url_column,
+                    'description_columns': description_columns,
+                    'context_columns': context_columns,
+                    'category_column': category_column,
+                    'multi_select': False  # Will be set based on taxonomy
+                }
+                
+                # Show data preview
+                st.subheader("📋 Data Preview")
+                st.dataframe(df.head(10), use_container_width=True)
+                st.info(f"Showing first 10 rows of {len(df)} total rows")
+        
+        with tab3:
+            # Processing Options (moved from tab1)
+            st.header("🚀 Processing Options")
+            
+            # Get the current tagging method from the selectbox in tab1
+            # We need to retrieve it from the widget state
+            current_method = None
+            for widget_id, widget_value in st.session_state.items():
+                if 'selectbox' in str(widget_id) and isinstance(widget_value, str):
+                    if widget_value in ["Use Taxonomy", "Use Custom Prompt", "Use Multiple Custom Queries"]:
+                        current_method = widget_value
+                        break
+            
+            # If we can't find it from widgets, try to get it from existing logic
+            if not current_method:
+                # Default fallback - try to determine from config
+                if st.session_state.config.get('custom_queries'):
+                    current_method = "Use Multiple Custom Queries"
+                elif st.session_state.config.get('custom_prompt'):
+                    current_method = "Use Custom Prompt"
+                else:
+                    current_method = "Use Taxonomy"
+            
+            # Determine if we're ready to process
             ready_to_process = False
             
-            if tagging_method == "Use Taxonomy" and st.session_state.tagger.taxonomy:
+            if current_method == "Use Taxonomy" and st.session_state.tagger and st.session_state.tagger.taxonomy:
                 ready_to_process = True
-            elif tagging_method == "Use Custom Prompt" and st.session_state.config.get('custom_prompt'):
+            elif current_method == "Use Custom Prompt" and st.session_state.config.get('custom_prompt'):
                 ready_to_process = True
-            elif tagging_method == "Use Multiple Custom Queries" and st.session_state.custom_queries:
+            elif current_method == "Use Multiple Custom Queries" and st.session_state.custom_queries:
                 ready_to_process = True
             
+            # Show processing options only if ready and data is loaded
             if hasattr(st.session_state, 'df') and st.session_state.df is not None and ready_to_process:
-                st.header("🚀 Processing Options")
                 
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
-                    if tagging_method == "Use Taxonomy":
+                    if current_method == "Use Taxonomy":
                         multi_select = st.checkbox("Allow multiple tags per entity")
                         if 'config' in st.session_state:
                             st.session_state.config['multi_select'] = multi_select
@@ -1628,86 +1731,14 @@ descriptions:
                                 st.warning("⚠️ Search Errors by Query:")
                                 for query_name, count in search_error_queries:
                                     st.write(f"- {query_name}: {count} entities failed due to search errors")
-        
-        with tab2:
-            # Data Input and Column Configuration
-            st.header("📁 Data Input")
-            uploaded_file = st.file_uploader("Choose Excel/CSV file", 
-                                           type=['xlsx', 'xls', 'csv'])
-            
-            if uploaded_file:
-                # Load file
-                if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file)
-                    sheet_names = ['main']
+            else:
+                # Show helpful message when not ready to process
+                if not hasattr(st.session_state, 'df') or st.session_state.df is None:
+                    st.info("📁 Please upload data in the 'Data Input and Column Configuration' tab first.")
+                elif not ready_to_process:
+                    st.info("🎯 Please complete the configuration in the 'Tagging Method and Configuration' tab first.")
                 else:
-                    excel_file = pd.ExcelFile(uploaded_file)
-                    sheet_names = excel_file.sheet_names
-                    
-                    selected_sheet = st.selectbox("Select sheet", sheet_names)
-                    df = pd.read_excel(uploaded_file, sheet_name=selected_sheet)
-                
-                st.session_state.df = df
-                st.success(f"Loaded {len(df)} rows")
-                
-                # Auto-backup input file
-                if st.session_state.tagger:
-                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
-                    st.info(f"📁 Input backup saved: {backup_path.name}")
-                
-                # Column selection
-                st.header("📊 Column Configuration")
-                columns = df.columns.tolist()
-                
-                name_column = st.selectbox("Entity name column", columns,
-                                          help="Column containing the names to tag")
-                
-                use_search = st.checkbox("Use web search (Perplexity)", 
-                                       value=False,
-                                       disabled=not perplexity_key)
-                
-                url_column = None
-                description_columns = []
-                
-                if use_search:
-                    url_column = st.selectbox("URL column (optional)", 
-                                            ['None'] + columns)
-                    url_column = None if url_column == 'None' else url_column
-                else:
-                    description_columns = st.multiselect(
-                        "Description columns",
-                        columns,
-                        help="Columns containing descriptions or relevant text"
-                    )
-                
-                context_columns = st.multiselect(
-                    "Context columns (optional)",
-                    [c for c in columns if c != name_column],
-                    help="Additional columns to provide context for tagging"
-                )
-                
-                category_column = st.selectbox(
-                    "Category column (optional)",
-                    ['None'] + columns,
-                    help="If your taxonomy has categories"
-                )
-                category_column = None if category_column == 'None' else category_column
-                
-                # Save configuration
-                st.session_state.config = {
-                    'name_column': name_column,
-                    'use_search': use_search,
-                    'url_column': url_column,
-                    'description_columns': description_columns,
-                    'context_columns': context_columns,
-                    'category_column': category_column,
-                    'multi_select': False  # Will be set based on taxonomy
-                }
-                
-                # Show data preview
-                st.subheader("📋 Data Preview")
-                st.dataframe(df.head(10), use_container_width=True)
-                st.info(f"Showing first 10 rows of {len(df)} total rows")
+                    st.info("⚙️ Configuration incomplete. Please check the previous tabs.")
     
     else:
         st.warning("Please initialize the tagger with your API keys in the sidebar")
