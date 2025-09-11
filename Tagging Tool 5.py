@@ -1424,7 +1424,7 @@ descriptions:
                 
                 # Run a Test checkbox
                 run_test = st.checkbox("Run a Test")
-                st.markdown("<small>Tags first 10 rows only, to preview output</small>", unsafe_allow_html=True)
+                st.markdown("<small>Tags first 10 rows only, to preview output (recommended before processing full dataset)</small>", unsafe_allow_html=True)
 
                 # Check if we're resuming from checkpoint
                 if hasattr(st.session_state, 'resume_processing') and st.session_state.resume_processing:
