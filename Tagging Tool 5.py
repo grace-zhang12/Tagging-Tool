@@ -1441,6 +1441,7 @@ descriptions:
                 else:
                     # Normal row selection
                     choose_rows = st.checkbox("Choose rows to process", value=False)
+                    st.markdown("<small>Row 1 is your first row of data excluding the column titles</small>", unsafe_allow_html=True)
                     
                     if choose_rows:
                         # Dynamic message based on whether category column is configured
@@ -1448,7 +1449,7 @@ descriptions:
                         if has_category_column:
                             st.markdown("<small>Tool will process all rows you select using \"Select range\", \"Select rows\", and \"Select categories\".</small>", unsafe_allow_html=True)
                         else:
-                            st.markdown("<small>Tool will process all rows you select using \"Select range\" and \"Select rows\".</small>", unsafe_allow_html=True)
+                            st.markdown("<small>Tool will process all rows you select using \"Select range\" and \"Select rows\". (Optionally, configure a Category column in the Data Input tab in order to select rows by category)</small>", unsafe_allow_html=True)
                         
                         # Initialize sets to collect selected row indices
                         selected_indices = set()
