@@ -1421,6 +1421,10 @@ descriptions:
                 
                 # Row selection
                 st.subheader("Select rows to process")
+                
+                # Run a Test checkbox
+                run_test = st.checkbox("Run a Test")
+                st.markdown("<small>Tags first 10 rows only, to preview output</small>", unsafe_allow_html=True)
 
                 # Check if we're resuming from checkpoint
                 if hasattr(st.session_state, 'resume_processing') and st.session_state.resume_processing:
@@ -1430,27 +1434,102 @@ descriptions:
                     
                     # Clear the resume flag after using it
                     del st.session_state.resume_processing
+                elif run_test:
+                    # Test mode - process first 10 rows
+                    rows_to_process = st.session_state.df.head(10)
+                    st.info(f"Test mode: Will process first {len(rows_to_process)} rows")
                 else:
                     # Normal row selection
-                    process_all = st.checkbox("Process all rows", value=True)
+                    choose_rows = st.checkbox("Choose rows to process", value=False)
                     
-                    if not process_all:
-                        if 'config' in st.session_state and st.session_state.config.get('category_column'):
-                            # Filter by category
-                            categories = st.session_state.df[st.session_state.config['category_column']].unique()
-                            selected_categories = st.multiselect("Select categories", categories)
-                            
-                            if selected_categories:
-                                mask = st.session_state.df[st.session_state.config['category_column']].isin(selected_categories)
-                                rows_to_process = st.session_state.df[mask]
-                            else:
-                                rows_to_process = st.session_state.df
+                    if choose_rows:
+                        # Dynamic message based on whether category column is configured
+                        has_category_column = 'config' in st.session_state and st.session_state.config.get('category_column')
+                        if has_category_column:
+                            st.markdown("<small>Tool will process all rows you select using \"Select range\", \"Select rows\", and \"Select categories\".</small>", unsafe_allow_html=True)
                         else:
-                            # Manual row range
-                            total_rows = len(st.session_state.df)
-                            row_range = st.slider("Select row range", 0, total_rows, (0, min(100, total_rows)))
-                            rows_to_process = st.session_state.df.iloc[row_range[0]:row_range[1]]
+                            st.markdown("<small>Tool will process all rows you select using \"Select range\" and \"Select rows\".</small>", unsafe_allow_html=True)
+                        
+                        # Initialize sets to collect selected row indices
+                        selected_indices = set()
+                        
+                        # Select range option (always available)
+                        select_range = st.checkbox("Select range", help="Select a continuous range of rows")
+                        
+                        if select_range:
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                start_row = st.number_input("Starting row", min_value=1, max_value=len(st.session_state.df), value=1, step=1)
+                            with col2:
+                                end_row = st.number_input("End row", min_value=start_row, max_value=len(st.session_state.df), value=min(10, len(st.session_state.df)), step=1)
+                            
+                            # Add range selection to indices (convert to 0-based indexing)
+                            if start_row <= end_row:
+                                range_indices = set(range(start_row - 1, end_row))
+                                selected_indices.update(range_indices)
+                        
+                        # Select rows checkbox (always available)
+                        select_rows_manually = st.checkbox("Select rows", help="Manually select specific row indices")
+                        
+                        if select_rows_manually:
+                            # Show format information
+                            st.markdown("""
+                            <small>
+                            • Supports individual numbers: 1,3,5,10<br>
+                            • Supports ranges: 5-8 (includes rows 5,6,7,8)<br>
+                            • Supports combinations: 1,3,5-8,10
+                            </small>
+                            """, unsafe_allow_html=True)
+                            
+                            # Manual row selection by index
+                            st.markdown("Enter row numbers (comma-separated, e.g., 1,3,5-8,10):")
+                            manual_rows_input = st.text_input("Row numbers", placeholder="1,3,5-8,10")
+                            
+                            if manual_rows_input:
+                                try:
+                                    # Parse the input to get row indices
+                                    manual_indices = set()
+                                    parts = [part.strip() for part in manual_rows_input.split(',')]
+                                    
+                                    for part in parts:
+                                        if '-' in part:
+                                            # Handle ranges like "5-8"
+                                            start, end = part.split('-')
+                                            start, end = int(start.strip()), int(end.strip())
+                                            if 1 <= start <= end <= len(st.session_state.df):
+                                                manual_indices.update(range(start - 1, end))  # Convert to 0-based
+                                        else:
+                                            # Handle single numbers
+                                            row_num = int(part.strip())
+                                            if 1 <= row_num <= len(st.session_state.df):
+                                                manual_indices.add(row_num - 1)  # Convert to 0-based
+                                    
+                                    selected_indices.update(manual_indices)
+                                except ValueError:
+                                    st.error("Invalid format. Use comma-separated numbers or ranges (e.g., 1,3,5-8,10)")
+                        
+                        # Select categories option (only if category column is configured)
+                        if has_category_column:
+                            select_categories = st.checkbox("Select categories", help="Select rows by category values")
+                            
+                            if select_categories:
+                                categories = st.session_state.df[st.session_state.config['category_column']].unique()
+                                selected_categories = st.multiselect("Categories", categories,
+                                                                   help="Select categories to include")
+                                
+                                if selected_categories:
+                                    mask = st.session_state.df[st.session_state.config['category_column']].isin(selected_categories)
+                                    category_indices = set(st.session_state.df[mask].index)
+                                    selected_indices.update(category_indices)
+                        
+                        # Convert selected indices to dataframe
+                        if selected_indices:
+                            rows_to_process = st.session_state.df.loc[sorted(selected_indices)]
+                        else:
+                            rows_to_process = st.session_state.df.iloc[0:0]  # Empty dataframe
+                            
                     else:
+                        # Process all rows
                         rows_to_process = st.session_state.df
 
                 st.info(f"Will process {len(rows_to_process)} rows")            
