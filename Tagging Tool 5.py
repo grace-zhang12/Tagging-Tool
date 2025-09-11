@@ -45,7 +45,6 @@ class GenericTagger:
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.backup_dir = Path("tagging_backups")
         self.backup_dir.mkdir(exist_ok=True)
-        self.test_mode = False
         self.file_lock = threading.Lock()  # For thread-safe file operations
         
     def load_taxonomy_from_dict(self, taxonomy_dict: Dict[str, Any]) -> TaxonomyConfig:
@@ -158,10 +157,6 @@ class GenericTagger:
         Returns:
             Tuple of (description, success_flag)
         """
-        if self.test_mode:
-            # In test mode, return mock data
-            return f"TEST MODE: Mock description for {entity_name}. This is a simulated search result for testing purposes.", True
-            
         if not self.perplexity_api_key:
             return f"No search performed for {entity_name} - Perplexity API key not provided", False
         
@@ -253,31 +248,6 @@ Please find and provide information about {entity_name} that would be most relev
                            multi_select: bool = False, existing_data: Dict = None,
                            custom_prompt: str = None) -> Dict:
         """Use AI to select appropriate tags or classify based on prompt using Responses API"""
-        if self.test_mode:
-            # In test mode, return mock results
-            if custom_prompt and not available_tags:
-                return {
-                    'status': 'success',
-                    'result': 'TEST MODE: Mock classification result',
-                    'confidence': 0.95,
-                    'reasoning': 'This is a test mode response'
-                }
-            elif multi_select and available_tags:
-                return {
-                    'status': 'success',
-                    'primary_tag': available_tags[0] if available_tags else 'Test Tag',
-                    'secondary_tags': available_tags[1:3] if len(available_tags) > 1 else [],
-                    'confidence': 0.95,
-                    'reasoning': 'Test mode - mock tagging'
-                }
-            elif available_tags:
-                return {
-                    'status': 'success',
-                    'tag': available_tags[0] if available_tags else 'Test Tag',
-                    'confidence': 0.95,
-                    'reasoning': 'Test mode - mock tagging'
-                }
-            
         if not self.openai_client:
             return {
                 'status': 'error',
@@ -804,23 +774,15 @@ def create_streamlit_app():
             perplexity_key = st.text_input("Perplexity API Key", type="password",
                                          help="Optional - only needed if using web search")
             
-            # Test mode toggle
-            test_mode = st.checkbox("🧪 Test Mode", 
-                                   help="Run without making actual API calls (for testing)")
-            
             if st.button("Initialize Tagger"):
-                if openai_key or test_mode:
+                if openai_key:
                     st.session_state.tagger = GenericTagger(
                         perplexity_api_key=perplexity_key if perplexity_key else None,
-                        openai_api_key=openai_key if not test_mode else "test-key"
+                        openai_api_key=openai_key
                     )
-                    st.session_state.tagger.test_mode = test_mode
-                    
-                    if test_mode:
-                        st.warning("⚠️ TEST MODE: Using mock data, no API calls will be made")
                     st.success("✅ Tagger initialized!")
                 else:
-                    st.error("OpenAI API key is required (unless in test mode)")
+                    st.error("OpenAI API key is required")
         
         # Checkpoint management (moved here to keep sidebar functionality)
         if st.session_state.tagger:
@@ -1505,10 +1467,6 @@ descriptions:
                     else:
                         # Fresh start
                         initial_results = []
-                                    
-                    # Show test mode warning
-                    if st.session_state.tagger.test_mode:
-                        st.warning("🧪 Running in TEST MODE - No actual API calls will be made")
                     
                     # Progress tracking
                     progress_bar = st.progress(0)
@@ -1518,11 +1476,6 @@ descriptions:
                     # Process entities
                     results = []
                     errors = []
-                    
-                    # Test mode limit
-                    if st.session_state.tagger.test_mode and len(rows_to_process) > 10:
-                        st.info("Test mode: Limiting to first 10 rows")
-                        rows_to_process = rows_to_process.iloc[:10]
                     
                     # Use ThreadPoolExecutor for parallel processing
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
