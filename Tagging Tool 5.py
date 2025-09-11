@@ -1581,8 +1581,9 @@ descriptions:
                                 completed = len(results) + len(errors) + 1
                                 status_text.text(f"Processing {completed}/{len(rows_to_process)}: {entity_name}")
                                 
-                                # Get result
+                                # Get result and add original index for sorting
                                 result = future.result()
+                                result['_original_index'] = idx
                                 results.append(result)
                                 
                                 # Update progress
@@ -1590,18 +1591,34 @@ descriptions:
                                 progress_bar.progress(progress)
                                 
                                 # Save checkpoint (include initial results)
-                                all_results = initial_results + results
+                                # Sort current results by original index before checkpointing
+                                sorted_results = sorted(results, key=lambda x: x['_original_index'])
+                                # Remove temporary index for checkpoint
+                                checkpoint_results = []
+                                for r in sorted_results:
+                                    r_copy = r.copy()
+                                    r_copy.pop('_original_index', None)
+                                    checkpoint_results.append(r_copy)
+                                
+                                all_results = initial_results + checkpoint_results
                                 if len(results) % batch_size == 0:
                                     checkpoint_path = st.session_state.tagger.save_checkpoint(
                                         all_results, f"batch_{len(all_results)}"
                                     )
                                     status_text.text(f"Checkpoint saved: {checkpoint_path.name}")
                                 
-                                # Show live results
+                                # Show live results (sorted by original index)
                                 if len(results) > 0:
-                                    # Show last 5 results
-                                    recent_results = results[-5:]
-                                    results_df = pd.DataFrame(recent_results)
+                                    # Show last 5 results in original order
+                                    sorted_recent = sorted(results[-5:], key=lambda x: x['_original_index'])
+                                    # Remove temporary index for display
+                                    display_results = []
+                                    for r in sorted_recent:
+                                        r_copy = r.copy()
+                                        r_copy.pop('_original_index', None)
+                                        display_results.append(r_copy)
+                                    
+                                    results_df = pd.DataFrame(display_results)
                                     
                                     # For multiple queries, show a subset of columns
                                     if st.session_state.config.get('custom_queries'):
@@ -1628,6 +1645,12 @@ descriptions:
                                 completed = len(results) + len(errors)
                                 progress = completed / len(rows_to_process)
                                 progress_bar.progress(progress)
+                    
+                    # Sort results by original index to maintain input order
+                    results.sort(key=lambda x: x['_original_index'])
+                    # Remove the temporary index field
+                    for result in results:
+                        result.pop('_original_index', None)
                     
                     # Combine initial results with new results
                     st.session_state.results = initial_results + results
