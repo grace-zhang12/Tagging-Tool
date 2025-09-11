@@ -1283,6 +1283,24 @@ descriptions:
         with tab2:
             # Data Input and Column Configuration
             st.header("📁 Data Input")
+            
+            # Add explanatory text in smaller font
+            st.markdown("""
+            <div style="font-size: 14px; color: #666; margin-bottom: 20px;">
+            Input one Excel file containing your entities to be tagged (and any other additional columns of information), formatted with column titles starting in cell A1.
+            <br><br>
+            <strong>Data Input columns:</strong>
+            <ul>
+                <li><strong>Entity to be tagged</strong> (required)</li>
+                <li><strong>'Description' column:</strong> Only applicable if not using Web Search; the main information the model reads about each entity to inform the tagging</li>
+                <li><strong>'URL' column:</strong> Optional, only applicable if using Web Search and you have specific websites you want to search, e.g. company websites</li>
+                <li><strong>'Context' column(s):</strong> Optional, extra fields (e.g. country, sector) the model can reference</li>
+                <li><strong>Category column:</strong> Only applicable if using tag categories, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)</li>
+            </ul>
+            The tool will output your original file with an added column containing tags (will add multiple columns containing tags if you use multiple custom queries).
+            </div>
+            """, unsafe_allow_html=True)
+            
             uploaded_file = st.file_uploader("Choose Excel/CSV file", 
                                            type=['xlsx', 'xls', 'csv'])
             
