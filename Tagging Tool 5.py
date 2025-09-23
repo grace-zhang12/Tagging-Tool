@@ -422,6 +422,16 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
         try:
             entity_name = row_data.get(config['name_column'], 'Unknown')
             
+            # Prepare context from other columns EARLY - before any search or tagging
+            context_columns = config.get('context_columns', [])
+            context_data = {col: row_data.get(col) for col in context_columns if col in row_data}
+            
+            # Build context string for search
+            context_parts = [f"{k}: {v}" for k, v in context_data.items() if v]
+            additional_context = ""
+            if context_parts:
+                additional_context = "Additional context:\n" + "\n".join(context_parts)
+            
             # Handle multiple custom queries
             custom_queries = config.get('custom_queries', [])
             
@@ -444,14 +454,15 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                         # Get retry settings from config
                         max_retries = config.get('search_max_retries', 3)
                         
-                        # Pass custom prompt to search function with source citation enabled
+                        # Pass custom prompt AND context to search function with source citation enabled
                         description, search_success = self.search_entity_info(
                             entity_name, 
                             entity_url,
+                            additional_context=additional_context,  # ADDED: Include context in search
                             max_retries=max_retries,
                             progress_callback=progress_callback,
                             custom_prompt=query_prompt,
-                            include_sources=True  # Enable source citations
+                            include_sources=True
                         )
                         
                         # Store search description for this query
@@ -473,11 +484,7 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                                 description_parts.append(f"{col}: {row_data[col]}")
                         description = "\n".join(description_parts) if description_parts else f"No description available for {entity_name}"
                     
-                    # Step 2: Prepare context from other columns
-                    context_columns = config.get('context_columns', [])
-                    context_data = {col: row_data.get(col) for col in context_columns if col in row_data}
-                    
-                    # Step 3: AI analysis for this query
+                    # Step 2: AI analysis for this query
                     tag_result = self.select_tags_with_ai(
                         description=description,
                         entity_name=entity_name,
@@ -488,7 +495,7 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                         custom_prompt=query_prompt
                     )
                     
-                    # Step 4: Store results for this query
+                    # Step 3: Store results for this query
                     if tag_result['status'] == 'error':
                         result[f'{query_name}_Result'] = 'Error'
                         result[f'{query_name}_Confidence'] = '0%'
@@ -516,14 +523,15 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                     # Get retry settings from config
                     max_retries = config.get('search_max_retries', 3)
                     
-                    # Pass custom prompt to search function with source citation enabled
+                    # Pass custom prompt AND context to search function with source citation enabled
                     description, search_success = self.search_entity_info(
                         entity_name, 
                         entity_url,
+                        additional_context=additional_context,  # ADDED: Include context in search
                         max_retries=max_retries,
                         progress_callback=progress_callback,
                         custom_prompt=custom_prompt,
-                        include_sources=True  # Enable source citations
+                        include_sources=True
                     )
                     
                     # If search failed (e.g., 429 error), don't proceed with tagging
@@ -546,11 +554,7 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                             description_parts.append(f"{col}: {row_data[col]}")
                     description = "\n".join(description_parts) if description_parts else f"No description available for {entity_name}"
                 
-                # Step 2: Prepare context from other columns
-                context_columns = config.get('context_columns', [])
-                context_data = {col: row_data.get(col) for col in context_columns if col in row_data}
-                
-                # Step 3: Determine if using taxonomy or custom prompt
+                # Step 2: Determine if using taxonomy or custom prompt
                 use_taxonomy = config.get('use_taxonomy', True)
                 custom_prompt = config.get('custom_prompt', None)
                 
@@ -573,7 +577,7 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                     available_tags = []
                     tag_descriptions = {}
                 
-                # Step 4: AI tagging
+                # Step 3: AI tagging
                 tag_result = self.select_tags_with_ai(
                     description=description,
                     entity_name=entity_name,
@@ -584,7 +588,7 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                     custom_prompt=custom_prompt
                 )
                 
-                # Step 5: Compile results
+                # Step 4: Compile results
                 result = row_data.copy()
                 
                 if config['use_search']:
@@ -775,7 +779,7 @@ def create_streamlit_app():
         - **Entity name column**: the entity to classify.
         - **URL column (optional)**: if using web search and you have URLs you want to search, e.g., company websites
         - **Description columns**: if not using web search -- the main text the model reads about each entity.
-        - **Context columns (optional)**: extra fields (e.g., country, sector) the model can reference.
+        - **Context columns (optional)**: extra fields (e.g., country, sector) the model can reference and will now help improve web search accuracy.
         - **Category column (optional)**: ties rows to taxonomy categories.
         
         ### 5. **Run**
@@ -920,7 +924,7 @@ def create_streamlit_app():
                 <li><strong>Entity to be tagged</strong> (required)</li>
                 <li><strong>'Description' column:</strong> Only applicable if not using Web Search; the main information the model reads about each entity to inform the tagging</li>
                 <li><strong>'URL' column:</strong> Optional, only applicable if using Web Search and you have specific websites you want to search, e.g. company websites</li>
-                <li><strong>'Context' column(s):</strong> Optional, extra fields (e.g. country, sector) the model can reference</li>
+                <li><strong>'Context' column(s):</strong> Optional, extra fields (e.g. country, sector) the model can reference <strong>and will now help improve web search accuracy by disambiguating entities</strong></li>
                 <li><strong>Category column:</strong> Only applicable if using tag categories, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)</li>
             </ul>
             The tool will output your original file with an added column containing tags (will add multiple columns containing tags if you use multiple custom queries).
@@ -978,7 +982,7 @@ def create_streamlit_app():
                 context_columns = st.multiselect(
                     "Context columns (optional)",
                     [c for c in columns if c != name_column],
-                    help="Additional columns to provide context for tagging"
+                    help="Additional columns to provide context for tagging and improve web search accuracy"
                 )
                 
                 category_column = st.selectbox(
@@ -1450,8 +1454,8 @@ descriptions:
                         st.session_state.config['search_max_retries'] = search_retries
                         
                         # Source citation option
-                        st.markdown("### 📚 Source Citations")
-                        st.info("Perplexity will be instructed to include source citations in its search results.")
+                        st.markdown("### 📚 Source Citations & Context Enhancement")
+                        st.info("Perplexity will be instructed to include source citations in its search results, and context columns will now help disambiguate entities during web search.")
                 
                 # Row selection
                 st.subheader("Select rows to process")
@@ -1834,7 +1838,7 @@ descriptions:
                                 if status_col in results_df.columns:
                                     search_errors = results_df[results_df[status_col] == 'Search Error']
                                     if len(search_errors) > 0:
-                                        search_error_queries.append((query_name, len(search_errors)))
+                                        search_error_queries.append((query_name, count))
                             
                             if search_error_queries:
                                 st.warning("⚠️ Search Errors by Query:")
