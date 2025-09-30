@@ -141,7 +141,7 @@ class GenericTagger:
     def search_entity_info(self, entity_name: str, entity_url: str = None, 
                         additional_context: str = "", max_retries: int = 3,
                         progress_callback=None, custom_prompt: str = None,
-                        include_sources: bool = True) -> Tuple[str, bool]:
+                        include_sources: bool = True, taxonomy_instructions: str = "") -> Tuple[str, bool]:
         """
         Search for entity information using Perplexity API
         
@@ -153,6 +153,7 @@ class GenericTagger:
             progress_callback: Optional callback for progress updates
             custom_prompt: Optional custom prompt to guide the search
             include_sources: Whether to include source citations in the output
+            taxonomy_instructions: Custom instructions from taxonomy mode
         
         Returns:
             Tuple of (description, success_flag)
@@ -181,6 +182,10 @@ Please find and provide information about {entity_name} that would be most relev
 2. Key characteristics and attributes
 3. Industry or domain they operate in
 {additional_context}"""
+            
+            # Add taxonomy custom instructions if provided
+            if taxonomy_instructions:
+                query += f"\n\nAdditional search guidance:\n{taxonomy_instructions}"
             
             # Add source citation instruction
             if include_sources:
@@ -246,7 +251,7 @@ Please find and provide information about {entity_name} that would be most relev
     def select_tags_with_ai(self, description: str, entity_name: str, 
                            available_tags: List[str], tag_descriptions: Dict[str, str],
                            multi_select: bool = False, existing_data: Dict = None,
-                           custom_prompt: str = None) -> Dict:
+                           custom_prompt: str = None, taxonomy_instructions: str = "") -> Dict:
         """Use AI to select appropriate tags or classify based on prompt using Responses API"""
         if not self.openai_client:
             return {
@@ -334,6 +339,10 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
 1. Why you chose the specific primary tag (and secondary tags if any)
 2. What key information from the entity description influenced your decision
 3. How any additional context data factored into your classification"""
+
+                # Add taxonomy custom instructions if provided
+                if taxonomy_instructions:
+                    system_content += f"\n\nADDITIONAL CUSTOM INSTRUCTIONS:\n{taxonomy_instructions}\n\nPlease follow these custom instructions while still selecting from the available taxonomy tags."
                 
                 user_content = f"Entity: {entity_name}\nDescription: {description}{context}"
                 
@@ -383,6 +392,10 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
 1. Why you chose this specific tag over others
 2. What key information from the entity description influenced your decision
 3. How any additional context data factored into your classification"""
+
+                # Add taxonomy custom instructions if provided
+                if taxonomy_instructions:
+                    system_content += f"\n\nADDITIONAL CUSTOM INSTRUCTIONS:\n{taxonomy_instructions}\n\nPlease follow these custom instructions while still selecting from the available taxonomy tags."
                 
                 user_content = f"Entity: {entity_name}\nDescription: {description}{context}"
                 
@@ -426,6 +439,11 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
             context_columns = config.get('context_columns', [])
             context_data = {col: row_data.get(col) for col in context_columns if col in row_data}
             
+            # Get taxonomy custom instructions if using taxonomy mode
+            taxonomy_instructions = ""
+            if config.get('use_taxonomy', True):
+                taxonomy_instructions = config.get('taxonomy_custom_instructions', '')
+            
             # Build context string for search
             context_parts = [f"{k}: {v}" for k, v in context_data.items() if v]
             additional_context = ""
@@ -462,7 +480,8 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                             max_retries=max_retries,
                             progress_callback=progress_callback,
                             custom_prompt=query_prompt,
-                            include_sources=True
+                            include_sources=True,
+                            taxonomy_instructions=taxonomy_instructions  # ADDED: Include taxonomy instructions
                         )
                         
                         # Store search description for this query
@@ -492,7 +511,8 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                         tag_descriptions={},
                         multi_select=False,
                         existing_data=context_data,
-                        custom_prompt=query_prompt
+                        custom_prompt=query_prompt,
+                        taxonomy_instructions=""  # Custom queries don't use taxonomy instructions
                     )
                     
                     # Step 3: Store results for this query
@@ -531,7 +551,8 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                         max_retries=max_retries,
                         progress_callback=progress_callback,
                         custom_prompt=custom_prompt,
-                        include_sources=True
+                        include_sources=True,
+                        taxonomy_instructions=taxonomy_instructions  # ADDED: Include taxonomy instructions
                     )
                     
                     # If search failed (e.g., 429 error), don't proceed with tagging
@@ -585,7 +606,8 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                     tag_descriptions=tag_descriptions,
                     multi_select=config.get('multi_select', False),
                     existing_data=context_data,
-                    custom_prompt=custom_prompt
+                    custom_prompt=custom_prompt,
+                    taxonomy_instructions=taxonomy_instructions  # ADDED: Include taxonomy instructions
                 )
                 
                 # Step 4: Compile results
@@ -651,6 +673,33 @@ For the reasoning field, provide a brief explanation (3 sentences max) that incl
                 'Status': 'Error'
             })
             return result
+
+
+def validate_custom_instructions(instructions: str) -> Optional[str]:
+    """
+    Validate custom instructions for taxonomy mode
+    
+    Args:
+        instructions: The custom instructions text
+        
+    Returns:
+        Error message if invalid, None if valid
+    """
+    if len(instructions) > 1000:
+        return "Instructions too long (maximum 1000 characters)"
+    
+    # Check for forbidden phrases that could break core functionality
+    forbidden_phrases = [
+        "ignore taxonomy", "ignore the taxonomy", "create new tags", "make up tags",
+        "add new tags", "invent tags", "don't use taxonomy", "bypass taxonomy"
+    ]
+    
+    instructions_lower = instructions.lower()
+    for phrase in forbidden_phrases:
+        if phrase in instructions_lower:
+            return f"Instructions cannot override core taxonomy functionality (found: '{phrase}')"
+    
+    return None  # Valid
 
 
 # Pre-configured prompts
@@ -760,33 +809,32 @@ def create_streamlit_app():
     st.markdown("Tag any entities using AI with customizable taxonomies or prompts")
     
     # User Guide - expandable section (always visible at top)
-    with st.expander("📚 Quick Start Guide (5 steps)", expanded=False):
+    with st.expander("📚 Quick Start Guide (4 steps)", expanded=False):
         st.markdown("""
         ### 1. **Initialize** in the sidebar
         Enter API keys. Enter Perplexity key only if using Web Search.
         
-        ### 2. **Choose a tagging method**
+        ### 2. **Upload input data and map columns**
+        - Upload input data (containing entities to be tagged) as CSV or Excel, formatted with labeled columns starting in cell A1; pick a sheet if prompted.
+        - **Configure columns:**
+            - **'Entity name' column**: the entity to be tagged (required)
+            - **'Description' column**: Only applicable if not using Web Search; the main information the model reads about each entity to inform the tagging
+            - **'URL' column**: Optional, only applicable if using Web Search and you have specific websites you want to search, e.g. company websites
+            - **'Context' column(s)**: Optional, extra fields (e.g. country, sector) the model can reference to help improve web search and tagging accuracy
+            - **'Category' column**: Only applicable if using tag categories, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)
+
+        ### 3. **Choose a tagging method**
         - **Use Taxonomy** → If you have a complete list of tags, provide tags via **Upload Excel**, **Paste YAML/JSON**, or **Enter manually**.
-          - *Tip: if you set a **Category column**, the tool will only use tags from that category.*
-          - Toggle **Allow multiple tags** for primary + secondary tags.
+            - Check **"Use tag categories"** if applicable, i.e. if tags and entities are assigned to categories (e.g. Technology) such that an entity's tag options are restricted to the tags within that category (e.g. Software, Hardware)
+            - Add **custom instructions** if applicable
         - **Use Custom Prompt** → pick a preset or write your own instruction.
         - **Use Multiple Custom Queries** → add several named prompts; each creates its own result columns.
         
-        ### 3. **Upload input data**
-        CSV or Excel, formatted with labeled columns starting in cell A1; pick a sheet if prompted.
-        
-        ### 4. **Map columns**
-        - **Entity name column**: the entity to classify.
-        - **URL column (optional)**: if using web search and you have URLs you want to search, e.g., company websites
-        - **Description columns**: if not using web search -- the main text the model reads about each entity.
-        - **Context columns (optional)**: extra fields (e.g., country, sector) the model can reference and will now help improve web search accuracy.
-        - **Category column (optional)**: ties rows to taxonomy categories.
-        
-        ### 5. **Run**
-        In **Processing Options** set threads, checkpoint **batch size**, and (if searching) **retry settings**. 
-        Select **all rows**, filter by **category**, or pick a **row range** → **Start Tagging**.
+        ### 4. **Start tagging**
+        - Leave **Processing Options** as default or set threads, checkpoint **batch size**, and (if searching) **retry settings**
+        - Select rows you want to run (if not all) → **Start Tagging**.
         """)
-    
+        
     # Initialize session state
     if 'tagger' not in st.session_state:
         st.session_state.tagger = None
@@ -1071,6 +1119,7 @@ def create_streamlit_app():
                     if use_tag_categories_taxonomy:
                         # When using tag categories
                         st.markdown("Starting in cell A1, three columns: **Category**, **Tag**, and **Description** of tag.")
+                        st.markdown("**Excel Taxonomy Formatting - Example**")
                         
                         # Show categorized example table
                         categorized_data = {
@@ -1107,6 +1156,7 @@ def create_streamlit_app():
                     else:
                         # When NOT using tag categories
                         st.markdown("Starting in cell A1, two columns: **Tag** and **Description** of tag.")
+                        st.markdown("**Excel Taxonomy Formatting - Example**")
                         
                         # Show simple example table
                         simple_data = {
@@ -1247,6 +1297,31 @@ descriptions:
                         )
                         st.session_state.tagger.taxonomy = taxonomy
                         st.success("✅ Taxonomy created!")
+                
+                # Custom instructions section (appears after all taxonomy setup methods)
+                st.subheader("Add custom instructions (optional)")
+                st.markdown("<small>Instructions for search behavior (e.g., search strategies) and tagging decisions (e.g., tag prioritization)</small>", unsafe_allow_html=True)
+                
+                custom_instructions = st.text_area(
+                    "Custom instructions",
+                    height=150,
+                    placeholder="""Examples:
+• Prioritize more specific manufacturing tags over general "manufacturing" tag
+• Base classification on company's end-customers rather than what the company does""",
+                    help="Optional instructions to guide both search and tagging behavior"
+                )
+                
+                # Validate and store custom instructions
+                if custom_instructions:
+                    validation_error = validate_custom_instructions(custom_instructions)
+                    if validation_error:
+                        st.error(validation_error)
+                        st.session_state.config['taxonomy_custom_instructions'] = ""
+                    else:
+                        st.session_state.config['taxonomy_custom_instructions'] = custom_instructions
+                        st.info(f"✅ Custom instructions added ({len(custom_instructions)} characters)")
+                else:
+                    st.session_state.config['taxonomy_custom_instructions'] = ""
             
             elif tagging_method == "Use Custom Prompt":
                 # Only update config if file has been loaded
