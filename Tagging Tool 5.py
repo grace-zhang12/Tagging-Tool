@@ -103,12 +103,21 @@ class GenericTagger:
         return backup_path
     
     def save_checkpoint(self, results: List[Dict], checkpoint_name: str):
-        """Save intermediate results to a checkpoint file in a thread-safe manner"""
+        """Save intermediate results to both pickle and Excel files in a thread-safe manner"""
         with self.file_lock:
-            checkpoint_path = self.checkpoint_dir / f"{checkpoint_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
-            with open(checkpoint_path, 'wb') as f:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Save pickle file (for fast loading/resuming)
+            checkpoint_path_pkl = self.checkpoint_dir / f"{checkpoint_name}_{timestamp}.pkl"
+            with open(checkpoint_path_pkl, 'wb') as f:
                 pickle.dump(results, f)
-            return checkpoint_path
+            
+            # Save Excel file (for human readability)
+            checkpoint_path_xlsx = self.checkpoint_dir / f"{checkpoint_name}_{timestamp}.xlsx"
+            df = pd.DataFrame(results)
+            df.to_excel(checkpoint_path_xlsx, index=False)
+            
+            return checkpoint_path_pkl  # Return pickle path for consistency with existing code
     
     def load_checkpoint(self, checkpoint_path: str) -> List[Dict]:
         """Load results from a checkpoint file"""
@@ -899,14 +908,32 @@ def create_streamlit_app():
                 else:
                     st.info("No backups yet")
             
-            # Checkpoint management
+            # Checkpoint management - FIXED VERSION
             with st.expander("💾 Checkpoints"):
-                checkpoint_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl"))
+                # Show checkpoint directory path for debugging
+                checkpoint_dir = st.session_state.tagger.checkpoint_dir.absolute()
+                st.text(f"Directory: {checkpoint_dir}")
                 
-                if checkpoint_files:
+                # Get both pickle and excel files
+                checkpoint_pkl_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl"))
+                checkpoint_xlsx_files = list(st.session_state.tagger.checkpoint_dir.glob("*.xlsx"))
+                
+                if checkpoint_pkl_files:
+                    st.write(f"Found {len(checkpoint_pkl_files)} checkpoint(s)")
+                    
+                    # Show both file types
+                    with st.expander("View checkpoint files", expanded=False):
+                        st.write("Pickle files (.pkl) - for loading:")
+                        for f in checkpoint_pkl_files:
+                            st.text(f"  {f.name}")
+                        if checkpoint_xlsx_files:
+                            st.write("Excel files (.xlsx) - for viewing:")
+                            for f in checkpoint_xlsx_files:
+                                st.text(f"  {f.name}")
+                    
                     selected_checkpoint = st.selectbox(
                         "Load checkpoint",
-                        ["None"] + [f.name for f in checkpoint_files]
+                        ["None"] + [f.name for f in checkpoint_pkl_files]
                     )
                     
                     if selected_checkpoint != "None":
@@ -947,11 +974,18 @@ def create_streamlit_app():
                                     # This will trigger the main processing section
                                     st.session_state.resume_processing = True
                                     st.rerun()  # Force a rerun to update the UI
-                
-                if st.button("Clear All Checkpoints"):
-                    for f in checkpoint_files:
-                        f.unlink()
-                    st.success("All checkpoints cleared")
+                    
+                    if st.button("Clear All Checkpoints"):
+                        # Clear both pkl and xlsx files
+                        for f in checkpoint_pkl_files:
+                            f.unlink()
+                        for f in checkpoint_xlsx_files:
+                            f.unlink()
+                        st.success("All checkpoints cleared")
+                        st.rerun()
+                else:
+                    st.info("No checkpoints found yet. Checkpoints are created automatically during processing.")
+                    st.text(f"Files will be saved to:\n{checkpoint_dir}")
     
     # Main area with tabs - SWAPPED ORDER
     if st.session_state.tagger:
@@ -1306,8 +1340,8 @@ descriptions:
                     "Custom instructions",
                     height=150,
                     placeholder="""Examples:
-• Prioritize more specific manufacturing tags over general "manufacturing" tag
-• Base classification on company's end-customers rather than what the company does""",
+- Prioritize more specific manufacturing tags over general "manufacturing" tag
+- Base classification on company's end-customers rather than what the company does""",
                     help="Optional instructions to guide both search and tagging behavior"
                 )
                 
@@ -1913,7 +1947,7 @@ descriptions:
                                 if status_col in results_df.columns:
                                     search_errors = results_df[results_df[status_col] == 'Search Error']
                                     if len(search_errors) > 0:
-                                        search_error_queries.append((query_name, count))
+                                        search_error_queries.append((query_name, len(search_errors)))
                             
                             if search_error_queries:
                                 st.warning("⚠️ Search Errors by Query:")
