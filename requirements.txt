@@ -1,7 +1,7 @@
-streamlit
-pandas
-numpy
-requests
-openai
-pydantic
-pyyaml
+streamlit 
+pandas 
+numpy 
+requests 
+openai 
+pydantic 
+pyyaml 
