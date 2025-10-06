@@ -30,21 +30,20 @@ class TaxonomyConfig:
 
 
 class GenericTagger:
-    def __init__(self, perplexity_api_key: str = None, openai_api_key: str = None):
+    def __init__(self, perplexity_api_key: str = None, openai_api_key: str = None, checkpoint_dir: str = "tagging_checkpoints"):
         """
         Initialize the GenericTagger with optional API keys
         
         Args:
             perplexity_api_key: Your Perplexity API key (optional)
             openai_api_key: Your OpenAI API key
+            checkpoint_dir: Directory path for saving checkpoints
         """
         self.perplexity_api_key = perplexity_api_key
         self.openai_client = openai.OpenAI(api_key=openai_api_key) if openai_api_key else None
         self.taxonomy = None
-        self.checkpoint_dir = Path("tagging_checkpoints")
+        self.checkpoint_dir = Path(checkpoint_dir)
         self.checkpoint_dir.mkdir(exist_ok=True)
-        self.backup_dir = Path("tagging_backups")
-        self.backup_dir.mkdir(exist_ok=True)
         self.file_lock = threading.Lock()  # For thread-safe file operations
         
     def load_taxonomy_from_dict(self, taxonomy_dict: Dict[str, Any]) -> TaxonomyConfig:
@@ -95,15 +94,8 @@ class GenericTagger:
         
         return TaxonomyConfig(categories=categories, descriptions=descriptions)
     
-    def save_automatic_backup(self, data: pd.DataFrame, backup_type: str = "input"):
-        """Save automatic backup of data"""
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_path = self.backup_dir / f"{backup_type}_backup_{timestamp}.xlsx"
-        data.to_excel(backup_path, index=False)
-        return backup_path
-    
     def save_checkpoint(self, results: List[Dict], checkpoint_name: str):
-        """Save intermediate results to both pickle and Excel files in a thread-safe manner"""
+        """Save checkpoint and automatically clean up old ones to save memory"""
         with self.file_lock:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
@@ -116,6 +108,22 @@ class GenericTagger:
             checkpoint_path_xlsx = self.checkpoint_dir / f"{checkpoint_name}_{timestamp}.xlsx"
             df = pd.DataFrame(results)
             df.to_excel(checkpoint_path_xlsx, index=False)
+            
+            # CLEAN UP: Keep only the 2 most recent checkpoints to save memory
+            all_pkl_files = sorted(self.checkpoint_dir.glob("*.pkl"), key=lambda x: x.stat().st_mtime)
+            all_xlsx_files = sorted(self.checkpoint_dir.glob("*.xlsx"), key=lambda x: x.stat().st_mtime)
+            
+            # Delete older files, keep only 2 most recent
+            for old_file in all_pkl_files[:-2]:
+                try:
+                    old_file.unlink()
+                except Exception:
+                    pass  # Ignore errors during cleanup
+            for old_file in all_xlsx_files[:-2]:
+                try:
+                    old_file.unlink()
+                except Exception:
+                    pass  # Ignore errors during cleanup
             
             return checkpoint_path_pkl  # Return pickle path for consistency with existing code
     
@@ -869,11 +877,20 @@ def create_streamlit_app():
             perplexity_key = st.text_input("Perplexity API Key", type="password",
                                          help="Optional - only needed if using web search")
             
+            # Checkpoint directory configuration
+            st.markdown("---")
+            checkpoint_path = st.text_input(
+                "Checkpoint Directory Path",
+                value="tagging_checkpoints",
+                help="Directory where checkpoint files will be saved. Leave as default or specify a custom path."
+            )
+            
             if st.button("Initialize Tagger"):
                 if openai_key:
                     st.session_state.tagger = GenericTagger(
                         perplexity_api_key=perplexity_key if perplexity_key else None,
-                        openai_api_key=openai_key
+                        openai_api_key=openai_key,
+                        checkpoint_dir=checkpoint_path
                     )
                     st.success("✅ Tagger initialized!")
                 else:
@@ -881,42 +898,40 @@ def create_streamlit_app():
         
         # Checkpoint management (moved here to keep sidebar functionality)
         if st.session_state.tagger:
-            st.header("💾 Checkpoints & Backups")
+            st.header("💾 Checkpoints")
             
-            # Backup management
-            with st.expander("📁 Backups"):
-                backup_files = list(st.session_state.tagger.backup_dir.glob("*.xlsx"))
-                
-                if backup_files:
-                    st.write(f"Found {len(backup_files)} backup(s)")
-                    
-                    # Show recent backups
-                    recent_backups = sorted(backup_files, key=lambda x: x.stat().st_mtime, reverse=True)[:5]
-                    for backup in recent_backups:
-                        col1, col2 = st.columns([3, 1])
-                        with col1:
-                            st.text(backup.name)
-                        with col2:
-                            file_size = backup.stat().st_size / 1024  # KB
-                            st.text(f"{file_size:.1f} KB")
-                    
-                    if st.button("Clear Old Backups"):
-                        # Keep only last 5 backups
-                        for backup in backup_files[5:]:
-                            backup.unlink()
-                        st.success("Old backups cleared")
-                else:
-                    st.info("No backups yet")
-            
-            # Checkpoint management - FIXED VERSION
-            with st.expander("💾 Checkpoints"):
+            # Checkpoint management
+            with st.expander("💾 Manage Checkpoints"):
                 # Show checkpoint directory path for debugging
                 checkpoint_dir = st.session_state.tagger.checkpoint_dir.absolute()
                 st.text(f"Directory: {checkpoint_dir}")
                 
-                # Get both pickle and excel files
-                checkpoint_pkl_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl"))
-                checkpoint_xlsx_files = list(st.session_state.tagger.checkpoint_dir.glob("*.xlsx"))
+                # Force directory to exist and get both pickle and excel files
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Use absolute path and sort by modification time
+                try:
+                    checkpoint_pkl_files = sorted(
+                        checkpoint_dir.glob("*.pkl"),
+                        key=lambda x: x.stat().st_mtime,
+                        reverse=True
+                    )
+                    checkpoint_xlsx_files = sorted(
+                        checkpoint_dir.glob("*.xlsx"),
+                        key=lambda x: x.stat().st_mtime,
+                        reverse=True
+                    )
+                except Exception as e:
+                    st.error(f"Error reading checkpoint files: {e}")
+                    checkpoint_pkl_files = []
+                    checkpoint_xlsx_files = []
+                
+                # Debug info
+                st.text(f"Found {len(checkpoint_pkl_files)} .pkl files")
+                if checkpoint_pkl_files:
+                    st.text("Files found:")
+                    for f in checkpoint_pkl_files[:3]:  # Show first 3
+                        st.text(f"  - {f.name}")
                 
                 if checkpoint_pkl_files:
                     st.write(f"Found {len(checkpoint_pkl_files)} checkpoint(s)")
@@ -1030,11 +1045,6 @@ def create_streamlit_app():
                 
                 st.session_state.df = df
                 st.success(f"Loaded {len(df)} rows")
-                
-                # Auto-backup input file
-                if st.session_state.tagger:
-                    backup_path = st.session_state.tagger.save_automatic_backup(df, "input")
-                    st.info(f"📁 Input backup saved: {backup_path.name}")
                 
                 # Column selection
                 st.header("📊 Column Configuration")
@@ -1847,7 +1857,24 @@ descriptions:
                     if st.session_state.results:
                         results_df = pd.DataFrame(st.session_state.results)
                         
-                        col1, col2 = st.columns(2)
+                        # Clean up old checkpoint files after successful completion
+                        checkpoint_files = list(st.session_state.tagger.checkpoint_dir.glob("*.pkl"))
+                        xlsx_files = list(st.session_state.tagger.checkpoint_dir.glob("*.xlsx"))
+                        
+                        if len(checkpoint_files) > 1:
+                            for f in sorted(checkpoint_files, key=lambda x: x.stat().st_mtime)[:-1]:
+                                try:
+                                    f.unlink()
+                                except Exception:
+                                    pass
+                        if len(xlsx_files) > 1:
+                            for f in sorted(xlsx_files, key=lambda x: x.stat().st_mtime)[:-1]:
+                                try:
+                                    f.unlink()
+                                except Exception:
+                                    pass
+                        
+                        col1, col2, col3 = st.columns(3)
                         
                         with col1:
                             # Download as Excel
@@ -1871,6 +1898,22 @@ descriptions:
                                 file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                 mime="text/csv"
                             )
+                        
+                        with col3:
+                            # Clear results from memory
+                            if st.button("🗑️ Clear Results from Memory"):
+                                st.session_state.results = []
+                                # Also clear checkpoint-related session state
+                                if hasattr(st.session_state, 'checkpoint_loaded'):
+                                    del st.session_state.checkpoint_loaded
+                                if hasattr(st.session_state, 'existing_results'):
+                                    del st.session_state.existing_results
+                                if hasattr(st.session_state, 'remaining_df'):
+                                    del st.session_state.remaining_df
+                                st.success("Results cleared!")
+                                st.rerun()
+                            
+                            st.caption("💡 Clear after downloading if processing multiple batches in same session")
                         
                         # Display results
                         st.header("📊 Results")
