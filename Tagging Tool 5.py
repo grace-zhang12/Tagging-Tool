@@ -86,20 +86,40 @@ class GenericTagger:
         with self.file_lock:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             
+            # Always save pickle (can handle empty data)
             checkpoint_path_pkl = self.checkpoint_dir / f"{checkpoint_name}_{timestamp}.pkl"
             with open(checkpoint_path_pkl, 'wb') as f:
                 pickle.dump(results, f)
             
+            # Only create Excel if there's data to write
             checkpoint_path_xlsx = self.checkpoint_dir / f"{checkpoint_name}_{timestamp}.xlsx"
-            if isinstance(results, dict):
-                with pd.ExcelWriter(checkpoint_path_xlsx, engine='openpyxl') as writer:
-                    for key, data in results.items():
-                        sheet_name = f"{key[0]}_{key[1]}"[:31]
-                        pd.DataFrame(data).to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                df = pd.DataFrame(results)
-                df.to_excel(checkpoint_path_xlsx, index=False)
+            has_data = False
             
+            if isinstance(results, dict):
+                # Check if any job has results
+                sheets_to_write = {}
+                for key, data in results.items():
+                    if data and len(data) > 0:
+                        df = pd.DataFrame(data)
+                        if len(df) > 0:
+                            sheet_name = f"{key[0]}_{key[1]}"[:31]
+                            sheets_to_write[sheet_name] = df
+                            has_data = True
+                
+                # Only create Excel file if we have data
+                if has_data:
+                    with pd.ExcelWriter(checkpoint_path_xlsx, engine='openpyxl') as writer:
+                        for sheet_name, df in sheets_to_write.items():
+                            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                # Handle list of results
+                if results and len(results) > 0:
+                    df = pd.DataFrame(results)
+                    if len(df) > 0:
+                        df.to_excel(checkpoint_path_xlsx, index=False)
+                        has_data = True
+            
+            # Clean up old files
             all_pkl_files = sorted(self.checkpoint_dir.glob("*.pkl"), key=lambda x: x.stat().st_mtime)
             all_xlsx_files = sorted(self.checkpoint_dir.glob("*.xlsx"), key=lambda x: x.stat().st_mtime)
             
@@ -1367,7 +1387,7 @@ def run_concurrent_tagging(tagging_jobs, max_workers, batch_size, search_retries
     """Run all tagging jobs concurrently"""
     st.session_state.processing = True
     
-    progress_bar = st.progress(0)
+    progress_bar = st.progress(0.0)
     status_text = st.empty()
     
     all_tasks = []
@@ -1399,6 +1419,11 @@ def run_concurrent_tagging(tagging_jobs, max_workers, batch_size, search_retries
     completed = 0
     total_tasks = len(all_tasks)
     
+    if total_tasks == 0:
+        st.error("No tasks to process. Please select rows to tag.")
+        st.session_state.processing = False
+        return
+    
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_task = {
             executor.submit(
@@ -1419,22 +1444,27 @@ def run_concurrent_tagging(tagging_jobs, max_workers, batch_size, search_retries
                 results_by_job[job_idx].append(result)
                 
                 completed += 1
-                progress = completed / total_tasks
+                progress = min(completed / total_tasks, 1.0)  # Clamp to 1.0 to avoid exceeding bounds
                 progress_bar.progress(progress)
                 
                 entity_name = result.get(task['config']['name_column'], 'Unknown')
                 status_text.text(f"Processing {completed}/{total_tasks}: {entity_name}")
                 
                 if completed % batch_size == 0:
-                    checkpoint_path = st.session_state.tagger.save_checkpoint(
-                        results_by_job, f"checkpoint_{completed}"
-                    )
-                    status_text.text(f"Checkpoint saved: {checkpoint_path.name}")
+                    try:
+                        checkpoint_path = st.session_state.tagger.save_checkpoint(
+                            results_by_job, f"checkpoint_{completed}"
+                        )
+                        status_text.text(f"Checkpoint saved: {checkpoint_path.name}")
+                    except Exception as checkpoint_error:
+                        # Log checkpoint error but continue processing
+                        print(f"Warning: Failed to save checkpoint at {completed}/{total_tasks}: {checkpoint_error}")
+                        status_text.text(f"Warning: Checkpoint save failed, continuing processing...")
                 
             except Exception as e:
                 st.error(f"Error processing entity: {str(e)}")
                 completed += 1
-                progress = completed / total_tasks
+                progress = min(completed / total_tasks, 1.0)  # Clamp to 1.0 to avoid exceeding bounds
                 progress_bar.progress(progress)
     
     final_results_by_sheet = {}
@@ -1459,6 +1489,10 @@ def run_concurrent_tagging(tagging_jobs, max_workers, batch_size, search_retries
                         if key not in job['df'].columns:
                             col_name = f"{key}{suffix}"
                             final_results_by_sheet[sheet_key].loc[idx, col_name] = value
+    
+    # Ensure progress bar shows 100% completion
+    progress_bar.progress(1.0)
+    status_text.text(f"Processing complete! {completed}/{total_tasks} entities processed")
     
     st.session_state.results = final_results_by_sheet
     st.session_state.processing = False
@@ -1494,6 +1528,7 @@ def create_download_buttons(results_by_sheet):
     with col1:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            sheets_written = 0
             for (filename, sheet_name), df in results_by_sheet.items():
                 if 'Status' in df.columns:
                     tagged_df = df[df['Status'].notna()].copy()
@@ -1507,15 +1542,23 @@ def create_download_buttons(results_by_sheet):
                     else:
                         tagged_df = df.copy()
                 
-                safe_sheet_name = sheet_name[:31]
-                tagged_df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                # Only write non-empty dataframes
+                if len(tagged_df) > 0:
+                    safe_sheet_name = sheet_name[:31]
+                    tagged_df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                    sheets_written += 1
+                else:
+                    st.warning(f"⚠️ No results to export for sheet: {sheet_name}")
         
-        st.download_button(
-            label="📥 Download All Results (Excel)",
-            data=output.getvalue(),
-            file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        if sheets_written > 0:
+            st.download_button(
+                label="📥 Download All Results (Excel)",
+                data=output.getvalue(),
+                file_name=f"tagged_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.error("No results available to download. All sheets are empty.")
     
     with col2:
         if st.button("🗑️ Clear Results from Memory"):
@@ -1538,6 +1581,10 @@ def create_download_buttons(results_by_sheet):
             else:
                 display_df = df.copy()
         
+        if len(display_df) == 0:
+            st.warning(f"⚠️ No results to display for sheet: {sheet_name}")
+            continue
+            
         with st.expander(f"Results: {sheet_name} ({len(display_df)} tagged rows)", expanded=True):
             show_filter = st.checkbox(f"Show filter options for {sheet_name}", key=f"filter_{sheet_name}")
             if show_filter:
